@@ -1,0 +1,21 @@
+# 環境・依存（再現は requirements.txt で行う）
+venv/
+.venv-openai/
+__pycache__/
+*.pyc
+
+# データ・生成物
+data/
+*.mp4
+*.m4a
+*.wav
+*.srt
+*.vtt
+
+# 認証・秘密
+.env
+*.pem
+id_*
+
+# OS
+.DS_Store

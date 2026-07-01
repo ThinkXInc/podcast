@@ -1,0 +1,93 @@
+■ 差分適用パッケージ（手順書準拠の修正）
+
+このフォルダの中身を、既存プロジェクト ~/Sources/podcast-pipeline/ の
+同じ場所に上書きコピーするだけ。arm64環境やpaths.conf等の設定は触らない。
+
+コピーするファイル:
+  prompts/prompt_all.txt   → ★新設。本命+補助+候補外ゾーン+事実チェックを1回で出す統合プロンプト
+  prompts/prompt_1_1.txt   → （旧）個別プロンプト。統合版に移行したので参考用に残置
+  prompts/prompt_1_2.txt   → 同上
+  prompts/prompt_2_1.txt   → 同上＋fact_checks
+  scripts/make_review_pdf.py … 新規。校正用PDFを生成（下記の方式に刷新）
+  scripts/suggest.py       → 候補生成後に校正用PDFを自動生成する処理を追加
+  CLAUDE.md                → 全要素提示＋校正用PDFの指示を追記
+
+Claude Code にこう言えば適用してくれる:
+  「podcast-update/ の中身を podcast-pipeline/ の同じ場所に上書きコピーして。
+   既存の config や .claude や arm64 venv 設定は触らないこと」
+
+■ 校正用PDFの方式（重要・刷新）
+make_review_pdf.py は「ゼロから全文を組む」のではなく、
+Notta が出した【全文PDF】を土台にして、その上へ切り出し案を重ね描きする。
+
+  - data/<ID>/ の中の、ファイル名に "transcript" を含む .pdf を土台にする
+  - ファイル名に "要約" を含む .pdf は参照用としてそのまま（書き込まない）
+  → この2つのPDFを音源と同じ data/<ID>/ に置いておくこと。
+    全文PDF（transcript）が無いと校正用PDFは作れない。
+
+色分け:
+  赤 = AI本命候補（薄い帯＋大きい▼案N ここから/▲案N ここまで＋セリフ一覧は表紙）
+  橙 = AI補助候補（左罫線＋▼補N/▲補N。短尺・番外・細かいもの）
+  濃赤 = カット推奨（候補内の cuts に基づき、該当文へ下線＋「」＋「✂カット推奨: 理由」）
+  グレー = 候補外（exclude_zones.json の区間を半透明グレーで伏せ＋理由併記。チェック不要）
+  青 = チャット確定（segments.json があれば反映。除外は ✂）
+
+新しいデータ項目（suggest.py が出す）:
+  candidates_raw.json の各候補に cuts:[{start_sec,end_sec,reason,quote}]
+    → 候補内のカットすべき箇所。quote はPDFで下線を引く目印
+  exclude_zones.json {exclude_zones:[{start_sec,end_sec,reason}], fact_checks:[...]}
+    → どの候補にもならない私的会話・脱線などをグレーで伏せる
+    → これは新設の専用プロンプト prompts/prompt_3_exclude.txt が、文字起こし全体を
+      通して候補外ゾーンを網羅抽出する（2-1の相乗りではなく独立タスクなので網羅性が高い）。
+      reason 先頭の「△」は確信度が低く人間判断が要るゾーン。
+
+位置決め:
+  候補の開始/終了の秒を HH:MM:SS に変換し、全文PDF中の
+  「HH:MM:SS Speaker N」行をテキストで探して、その行にマークを重ねる。
+  タイムスタンプが多少ズレても最近傍の行に丸めるので問題ない。
+
+必要なもの:
+  pip install PyMuPDF
+  和文フォントは Mac の Hiragino / Noto を自動検出（fitzはCFFも埋め込めるので
+  ヒラギノ.ttc や Noto .otf でもOK）。見つからない場合だけ環境変数
+  PODCAST_PDF_FONT に TTF/OTF/TTC のパスを指定する。
+
+実行:
+  python scripts/make_review_pdf.py <ID>
+  → data/<ID>/<ID>_校正用.pdf が出る。
+  チャットで切り出しが確定したら segments.json を書いて再実行すると青が入る。
+
+■ 既に走らせた 民主主義の会2-5 について
+candidates_raw.json と全文PDF（…-transcript.pdf）が既にあるので、
+校正用PDFは今すぐ作れる:
+  python scripts/make_review_pdf.py 民主主義の会2-5
+ただし今あるcandidates_raw.jsonは旧スキーマ（全文なし）なので、全文入りにするには
+suggest.py を新プロンプトで再実行する必要がある。急がないなら次回からでよい。
+
+──────────────────────────────────────────
+【料金ゼロの手動モード】（API課金を避けたいとき）
+──────────────────────────────────────────
+1. ブラウザのChatGPT（GPT-5.5 Pro）を開く
+2. prompts/prompt_all.txt の中身を貼り、続けて data/<ID>/transcript.txt
+   （または Notta文字起こし）を貼って実行
+3. GPTの応答【全文】を、末尾の ```json ブロックごと、data/<ID>/gptout.txt に保存
+4. python scripts/suggest.py <ID> を実行
+   → gptout.txt があれば API を呼ばず、それを使って候補・PDF・プレビューを生成
+   → 再実行しても API は呼ばれない（料金ゼロ）
+   ※ gptout.txt を消せば次回から通常のAPIモードに戻る
+
+──────────────────────────────────────────
+【最終処理】無音・長すぎる空白を詰める（前後比較できるよう元も残す）
+──────────────────────────────────────────
+切り出し動画ができた後の仕上げ。一律閾値でなく、前後の発話を見て
+区間ごとに「いい感じ」の残し幅を決める（ffmpegが検出、詰め幅はClaudeが判断）。
+
+1. python scripts/detect_silence.py <ID> <メディアファイル>
+   → 一定以上の無音を全部拾い、各区間の前後発話つきで silences.json に出す（検出のみ）
+   → 拾う閾値は PODCAST_SILENCE_MIN（既定0.6秒）、無音音量は PODCAST_SILENCE_NOISE（既定-30dB）
+2. 出た一覧を見て、区間ごとに残し幅(keep秒)を判断
+   文の切れ目は少し残す / 言い淀み・無駄な間はしっかり詰める
+3. trim_plan.json を書く: {"keeps":[{"start_sec":..,"end_sec":..,"keep":0.4}, ...]}
+4. そのまま python scripts/apply_trim.py <ID> <メディアファイル>（OK確認は挟まず一発で適用）
+   → 元は <名前>_orig.<拡張子> として必ず残る／処理後は <名前>_trimmed.<拡張子>
+   → 完了後に「処理前◯秒→処理後◯秒」と結果だけ報告。気になる区間があれば keep を直して再実行
