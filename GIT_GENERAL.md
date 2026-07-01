@@ -8,6 +8,18 @@
 - セットアップ / SSH / keychain / alias / LFS / submodule のコマンド → `docs/git_手順_原本.md`
 - ファイル配置・venv・requirements の規約 → `CLAUDE_GENERAL.md`
 
+## ブランチ運用
+- `master` = 本番（メインブランチ）。`develop` = 開発用。
+- ただし**ステージング環境が無いプロジェクトでは、原則 `master` だけをほぼ使う**
+  （今回の podcast-pipeline もこれに該当）。開発用ブランチを分けても回す先が無いので、
+  小さく直して master に直接コミットしていく運用でよい。
+- ステージング環境があるプロジェクトでは、develop で開発 → ステージングで確認 → master へ、
+  という流れにする。
+- どちらの運用かはプロジェクトの「このプロジェクトの状態」に明記する。
+- 補足: `git init` 直後のデフォルト枝名が `main` のことがある。`master` 運用なら
+  `git branch -M master` で名前を合わせてから push する。初回は上流を張る:
+  `git push -u origin master`（以降は `git push` だけでよい）。
+
 ## Claude Code が守ること
 1. **破壊的操作は必ず事前確認**
    `push --force` / `reset --hard` / ブランチ削除 / 履歴書き換え / `git rm -rf` /
@@ -37,6 +49,7 @@
    これらは確認を取ってから実行する。
 
 ## このプロジェクトの状態
-- `git init` 済み・初回コミット済み。user.name=kazukiotsuka / user.email=otsuka.kazuki@googlemail.com。
-- リモート（未接続。ユーザーが push）: `git@github.com:ThinkXInc/podcast-pipeline.git`
-- `.gitignore`: venv/ data/ 生成メディア/ 鍵(.env, id_*, *.pem) を除外。
+- `git init` 済み。user.name=kazukiotsuka / user.email=otsuka.kazuki@googlemail.com。
+- リモート: `git@github.com:ThinkXInc/podcast-pipeline.git`。`master` を push 済み。
+- **ステージング環境なし → `master` だけで運用**（develop は作っていない）。
+- `.gitignore`: venv/ .venv-openai/ data/ 生成メディア/ 鍵(.env, id_*, *.pem) を除外。
