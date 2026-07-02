@@ -1,6 +1,6 @@
 ■ 差分適用パッケージ（手順書準拠の修正）
 
-このフォルダの中身を、既存プロジェクト ~/Sources/podcast-pipeline/ の
+このフォルダの中身を、既存プロジェクト ~/Sources/podcast/ の
 同じ場所に上書きコピーするだけ。arm64環境やpaths.conf等の設定は触らない。
 
 コピーするファイル:
@@ -13,7 +13,7 @@
   CLAUDE.md                → 全要素提示＋校正用PDFの指示を追記
 
 Claude Code にこう言えば適用してくれる:
-  「podcast-update/ の中身を podcast-pipeline/ の同じ場所に上書きコピーして。
+  「podcast-update/ の中身を podcast/ の同じ場所に上書きコピーして。
    既存の config や .claude や arm64 venv 設定は触らないこと」
 
 ■ 校正用PDFの方式（重要・刷新）

@@ -18,7 +18,7 @@ sudo を伴う操作は事前確認、nginx は変更後に `nginx -t` してか
 
 ## 重要・権限の境界（厳守）
 
-- **書き込み・編集してよいのは、このプロジェクト `~/Sources/podcast-pipeline/` の中だけ。**
+- **書き込み・編集してよいのは、このプロジェクト `~/Sources/podcast/` の中だけ。**
   特に音源・成果物は `data/{ID}/` 配下に置く。
 - **プロジェクトの外（ホーム配下、他フォルダ、Google Drive の `~/Library/CloudStorage/`）は
   読み書きしない。** `.claude/settings.json` で deny されている。

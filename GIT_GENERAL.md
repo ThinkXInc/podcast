@@ -11,7 +11,7 @@
 ## ブランチ運用
 - `master` = 本番（メインブランチ）。`develop` = 開発用。
 - ただし**ステージング環境が無いプロジェクトでは、原則 `master` だけをほぼ使う**
-  （今回の podcast-pipeline もこれに該当）。開発用ブランチを分けても回す先が無いので、
+  （今回の podcast もこれに該当）。開発用ブランチを分けても回す先が無いので、
   小さく直して master に直接コミットしていく運用でよい。
 - ステージング環境があるプロジェクトでは、develop で開発 → ステージングで確認 → master へ、
   という流れにする。
@@ -23,7 +23,7 @@
 プロジェクトによって、master へ直接 push する運用と、PR 経由にする運用を切り替える。
 **どちらのモードかは各プロジェクトの「このプロジェクトの状態」に明記する。** 迷ったら直 push。
 
-### A. 直 push モード（小規模・一人・ステージング無し向け。今回の podcast-pipeline）
+### A. 直 push モード（小規模・一人・ステージング無し向け。今回の podcast）
 - 変更 → `add` → `commit` → `git push`（master へ直接）まで自動でよい。
 - settings.json: allow に `Bash(git push)` `Bash(git push origin:*)`。
   deny に force push / reset --hard / ブランチ削除（破壊的操作のみ禁止）。
@@ -90,7 +90,7 @@
 
 ## このプロジェクトの状態
 - `git init` 済み。user.name=kazukiotsuka / user.email=otsuka.kazuki@googlemail.com。
-- リモート: `git@github.com:ThinkXInc/podcast-pipeline.git`。`master` を push 済み。
+- リモート: `git@github.com:ThinkXInc/podcast.git`。`master` を push 済み。
 - **ステージング環境なし → `master` だけで運用**（develop は作っていない）。
 - **push モード = A（直 push）**。master へ直接 push する。PR は使わない。
 - `.gitignore`: venv/ .venv-openai/ data/ 生成メディア/ 鍵(.env, id_*, *.pem) を除外。

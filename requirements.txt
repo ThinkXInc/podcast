@@ -1,4 +1,4 @@
-# podcast-pipeline の Python 依存（プロジェクト内 venv/ を再現するための固定版）。
+# podcast の Python 依存（プロジェクト内 venv/ を再現するための固定版）。
 # 作り直し: python3.11(arm64) -m venv venv && venv/bin/pip install -r requirements.txt
 # ※ Apple Silicon では arm64 の python3.11 で作る（Intel版はセグフォルトの原因）。
 # ※ torch は 2.5.1 で固定（新しすぎると pyannote 3.3.2 が壊れる）。
