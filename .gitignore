@@ -19,3 +19,4 @@ id_*
 
 # OS
 .DS_Store
+.claude/worktrees/

@@ -1,0 +1,60 @@
+{
+  "permissions": {
+    "defaultMode": "default",
+    "deny": [
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.config/**)",
+      "Read(//Users/**/.ssh/**)",
+      "Read(.env)",
+      "Read(.env.*)",
+      "Read(**/.env)",
+      "Read(~/Library/CloudStorage/**)",
+      "Read(//Users/**/Library/CloudStorage/**)",
+      "Write(~/**)",
+      "Edit(~/**)",
+      "Write(//Users/**)",
+      "Edit(//Users/**)",
+      "Write(~/Library/CloudStorage/**)",
+      "Edit(~/Library/CloudStorage/**)",
+      "Bash(rm -rf:*)",
+      "Bash(rm -r:*)",
+      "Bash(sudo:*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push --force-with-lease:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git branch -D:*)",
+      "Bash(git branch -d:*)"
+    ],
+    "ask": [
+      "Write(**)",
+      "Edit(**)",
+      "Bash(brew install:*)"
+    ],
+    "allow": [
+      "Read(./**)",
+      "Glob(./**)",
+      "Grep(./**)",
+      "Bash",
+      "Bash(bash scripts/*.sh:*)",
+      "Bash(python scripts/*.py:*)",
+      "Bash(python3 scripts/*.py:*)",
+      "Bash(whisperx:*)",
+      "Bash(ffmpeg:*)",
+      "Bash(ffprobe:*)",
+      "Bash(source:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(pip install:*)",
+      "Bash(pip3 install:*)",
+      "Bash(git push)",
+      "Bash(git push origin:*)"
+    ]
+  }
+}

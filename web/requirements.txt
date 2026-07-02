@@ -1,0 +1,9 @@
+# web（生成物チェック用サイト）の依存。本体とは別の専用 venv 用。
+# セットアップ: python3 -m venv venv && venv/bin/pip install -r requirements.txt
+# 実装（app本体）が来たら、使うフレームワークを追記して pip freeze で固定する。
+
+# 本番は uWSGI で起動する（確定）
+uwsgi
+
+# 実装が来たら追記する例（未確定なのでコメント）:
+# flask

@@ -1,0 +1,4 @@
+venv/
+uwsgi.sock
+__pycache__/
+*.pyc

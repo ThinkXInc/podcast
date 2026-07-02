@@ -8,6 +8,14 @@
 関わるファイル（venv・依存・データ・中間物）はすべて作業ディレクトリ内に置く。ホーム
 （~/venvs 等）に散らさない」。venv は `<project>/venv`、既定もプロジェクト内を指す。
 
+**生成物チェック用サイト（`web/`）**: 生成物をブラウザで確認する独立サイトが `web/` にある。
+自己完結したサブコンポーネントで、**専用の venv / requirements.txt / CLAUDE.md を持つ**（本体と別）。
+サイト作業は `web/CLAUDE.md` に従う。本番は uWSGI→nginx→LB。処理後に該当ID ページのリンクを提示する。
+
+**運用コマンド**: build / uWSGI 再起動 / ログ / nginx の運用は `OPS_GENERAL.md`（ルール）と
+`docs/運用コマンド_原本.md`（コマンド原本）に従う。uWSGI サービスは `uwsgi_podcast.service`。
+sudo を伴う操作は事前確認、nginx は変更後に `nginx -t` してから反映。
+
 ## 重要・権限の境界（厳守）
 
 - **書き込み・編集してよいのは、このプロジェクト `~/Sources/podcast-pipeline/` の中だけ。**

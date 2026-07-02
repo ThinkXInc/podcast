@@ -1,0 +1,5 @@
+/* 生成物チェックサイトの最小スタイル。less は使わず、この直書き CSS のみ。 */
+body { font-family: sans-serif; margin: 2rem; }
+section { margin-bottom: 2rem; }
+video, audio { width: 100%; max-width: 720px; display: block; }
+h2 { font-size: 1rem; color: #333; }

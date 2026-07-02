@@ -1,0 +1,24 @@
+{# 生成物チェックページの型。会社共通の base.html を継承する。
+   実装（app本体）が来たら、data/<ID>/contents/ を渡してループ表示する。
+   less は使わない。スタイルは最小限（必要なら views/css に直書き CSS、または style 直書き）。 #}
+{% extends "general/base.html" %}
+
+{% block head %}
+  <link rel="stylesheet" href="/css/review.css">
+{% endblock %}
+
+{% block content %}
+  <h1>{{ id }} 生成物</h1>
+  {# 音源・動画をラベル付きで並べるだけ。実装時に contents を渡してループ。
+  {% for item in contents %}
+    <section>
+      <h2>{{ item.label }}</h2>
+      {% if item.type == 'video' %}
+        <video src="/media/{{ id }}/contents/{{ item.path }}" controls></video>
+      {% elif item.type == 'audio' %}
+        <audio src="/media/{{ id }}/contents/{{ item.path }}" controls></audio>
+      {% endif %}
+    </section>
+  {% endfor %}
+  #}
+{% endblock %}
