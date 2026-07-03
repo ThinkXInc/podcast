@@ -115,6 +115,13 @@ video { width: 100%; max-width: 860px; display: block; border-radius: 6px;
 .legend span.sw { padding:0 .3rem; border-radius:4px; margin-right:.15rem; font-weight:700; }
 .note { background:#f59e0b22; border-left:3px solid #f59e0b; padding:.5rem .8rem;
         border-radius:4px; font-size:.85rem; margin:.6rem 0; }
+/* セグメント・ジャンプナビ（sticky） */
+.segnav { position:sticky; top:0; z-index:5; display:flex; flex-wrap:wrap; gap:.3rem;
+          background:Canvas; border-bottom:1px solid #8884; padding:.4rem 0; margin-bottom:1rem; }
+.segnav a { font-size:.8rem; padding:.15rem .5rem; border:1px solid #8886; border-radius:6px;
+            color:inherit; white-space:nowrap; }
+.segnav a:hover { background:#2563eb22; text-decoration:none; }
+.seg { scroll-margin-top:2.6rem; }
 """
 
 
@@ -550,6 +557,12 @@ def render_id(idv):
         parts.append("<div class='note'>⚠ 無音詰め(最終工程)は未適用です（字幕は焼込済み）。"
                      "全文中に<b>⏱ 詰め候補</b>を差し込んでいます。</div>")
 
+    # セグメント・ジャンプナビ（sticky）
+    nav = "".join(
+        f"<a href='#seg{sg['index']}'>{sg['index']}. {esc((sg.get('title') or '').split('／')[0])}</a>"
+        for sg in sorted(segments, key=lambda x: x.get("index", 0)))
+    parts.append(f"<div class='segnav'>{nav}</div>")
+
     for sg in sorted(segments, key=lambda x: x.get("index", 0)):
         idx = sg.get("index")
         title = sg.get("title", "")
@@ -569,7 +582,7 @@ def render_id(idv):
         gaps = [g for g in (silseg or {}).get("gaps", [])
                 if g.get("flag") != "likely_dropped" and g.get("duration", 0) >= 1.5]
 
-        parts.append("<div class='seg'>")
+        parts.append(f"<div class='seg' id='seg{idx}'>")
         rank = cand.get("rank") if cand else None
         parts.append(
             "<div class='seghd'>"
