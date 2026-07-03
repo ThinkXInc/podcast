@@ -60,11 +60,30 @@ video { width: 100%; max-width: 860px; display: block; border-radius: 6px;
 /* 本文：行間を詰める */
 .transcript { margin-top:1rem; border-top:1px dashed #ccc6; padding-top:.6rem; }
 .transcript h3 { font-size:.9rem; margin:.2rem 0 .5rem; }
-.tp { margin:.5rem 0; line-height:1.5; }
+.tp { margin:.55rem 0; line-height:2.0; }
 .ts { color:#94a3b8; font-size:.78rem; font-variant-numeric:tabular-nums;
       display:block; margin-bottom:.02rem; }
 .ts-link { cursor:pointer; color:#2563eb; }
 .ts-link:hover { text-decoration:underline; }
+/* 本文チャンク: クリックで直前から再生 */
+.txt { cursor:pointer; border-radius:3px; }
+.txt:hover { background:#2563eb14; box-shadow:0 0 0 2px #2563eb22; }
+/* 理由の注釈: 該当箇所の“上の行間”に置く（本文の流れを邪魔しない） */
+.ann { position:relative; }
+.ann-label { position:absolute; bottom:calc(100% - 3px); left:0;
+             font-size:.6rem; font-weight:700; white-space:nowrap;
+             max-width:52ch; overflow:hidden; text-overflow:ellipsis;
+             line-height:1; pointer-events:none; opacity:.9; }
+.ann-done{ color:#1d4ed8; } .ann-todo{ color:#cc0044; }
+.ann-fact{ color:#ea580c; } .ann-exclude{ color:#6b7280; }
+.ann-spk{ color:#0d9488; } .ann-cutlist{ color:#b91c1c; }
+/* 詰め: |← X秒 →| のみ。候補=紫 / 詰め済み=緑。クリックで直前から再生 */
+.trim { cursor:pointer; color:#7c3aed; font-weight:700; font-size:.74rem;
+        white-space:nowrap; padding:0 .15rem; border-radius:3px;
+        font-variant-numeric:tabular-nums; }
+.trim:hover { background:#7c3aed22; text-decoration:underline; }
+.trim.done { color:#059669; }
+.trim.done:hover { background:#05966922; }
 
 .chip { display:inline; font-size:.72rem; font-weight:700; padding:0 .3rem;
         border-radius:4px; margin:0 .2rem; white-space:normal; }
@@ -395,84 +414,97 @@ def overlay_quotes(per, raw, char_gidx, quotes):
                     per[g] = quote_region
 
 
-def locate_trims(raw, char_gidx, gaps):
-    """詰め候補ギャップを before+after のマッチで単語境界に割り付ける。
-    返り値: dict gidx -> [chip_html,...]（その単語の直前に差し込む）"""
+def locate_trims(raw, char_gidx, gaps, vid_id, applied):
+    """詰めギャップを before+after のマッチで単語境界に割り付ける。
+    表示は |← X.X秒 →| のみ（秒数以外の文字を出さない）。クリックでその直前から再生。
+    候補=紫 / 詰め済み=緑（cssで区別）。返り値: dict gidx -> [chip_html,...]"""
     ins = {}
     for g in gaps:
-        before = g.get("before", "")
-        after = g.get("after", "")
-        needle = before + after
-        pos = -1
-        if len(before) >= 3 and len(after) >= 3:
-            pos = raw.find(needle)
+        before, after = g.get("before", ""), g.get("after", "")
+        if len(before) < 3 or len(after) < 3:
+            continue
+        pos = raw.find(before + after)
         if pos < 0:
             continue
         boundary = pos + len(before)
         if boundary >= len(char_gidx):
             continue
         gidx = char_gidx[boundary]
-        chip = (f"<span class='chip chip-trim'>⏱ 詰め候補(自然) "
-                f"-{g.get('duration', 0):.1f}秒</span>")
+        t = max(0.0, g.get("start_sec", 0) - 1.0)          # 詰め位置(final時刻)の直前から
+        cls = "trim done" if applied else "trim"
+        onclick = (f" onclick=\"event.stopPropagation();seekTo('{vid_id}',{t:.2f})\"" if vid_id else "")
+        chip = f"<span class='{cls}'{onclick}>|← {g.get('duration', 0):.1f}秒 →|</span>"
         ins.setdefault(gidx, []).append(chip)
     return ins
 
 
-def render_transcript(tsegments, s, e, regions, quotes, gaps, drops=None, vid_id=None):
+def render_transcript(tsegments, s, e, regions, quotes, gaps, drops=None, vid_id=None, applied=False):
     paras, toks, gmid, raw, char_gidx = build_word_model(tsegments, s, e)
     per = assign_regions(toks, gmid, regions)
     overlay_quotes(per, raw, char_gidx, quotes)
-    trim_ins = locate_trims(raw, char_gidx, gaps)
+    trim_ins = locate_trims(raw, char_gidx, gaps, vid_id, applied)
     drops = drops or []
-
-    def ts_span(t):
-        # 原音時刻 t を final 動画時刻へ変換し、クリックでその動画を頭出し再生
-        if vid_id:
-            ft = to_final(t, s, drops)
-            return (f"<span class='ts ts-link' onclick=\"seekTo('{vid_id}',{ft:.2f})\">"
-                    f"▶ {fmt_time(t)}</span>")
-        return f"<span class='ts'>{fmt_time(t)}</span>"
-
     emitted_chip = set()
-    out = []
-    for para in paras:
-        if para["words"] is None:
-            out.append(f"<div class='tp'>{ts_span(para['ts'])}{esc(para['text'])}</div>")
-            continue
-        pieces = []
-        cur = None
-        buf = []
 
-        def flush():
-            if not buf:
-                return
-            text = esc("".join(toks[g] for g in buf))
-            if cur is None:
-                pieces.append(text)
-            else:
-                chip = ""
-                if cur["kind"] != "quote" and id(cur) not in emitted_chip:
-                    emitted_chip.add(id(cur))
-                    rs = esc(cur.get("reason", ""))
-                    chip = (f"<span class='chip chip-{cur['kind']}'>{esc(cur['label'])}"
-                            + (f": {rs}" if rs else "") + "</span>")
-                pieces.append(f"{chip}<span class='r-{cur['kind']}'>{text}</span>")
-            buf.clear()
+    def seek_at(t, cls, inner):
+        """inner を、原音時刻 t の 1.5秒前(final)から再生するクリック可能spanで包む。"""
+        if not vid_id:
+            return inner
+        ft = max(0.0, to_final(t, s, drops) - 1.5)
+        return f"<span class='{cls}' onclick=\"seekTo('{vid_id}',{ft:.2f})\">{inner}</span>"
 
-        for gidx in para["words"]:
+    def emit(cur, buf):
+        if not buf:
+            return ""
+        text = esc("".join(toks[g] for g in buf))
+        if cur is None:
+            return text
+        if cur["kind"] == "quote":
+            return f"<span class='r-quote'>{text}</span>"
+        # 理由は該当語の“上の行間”に注釈として置く（同一regionは初回のみ）
+        label = ""
+        if id(cur) not in emitted_chip:
+            emitted_chip.add(id(cur))
+            rs = esc(cur.get("reason", ""))
+            full = esc(cur["label"]) + (f"：{rs}" if rs else "")
+            label = f"<span class='ann-label ann-{cur['kind']}' title=\"{full}\">{full}</span>"
+        return f"<span class='ann'>{label}<span class='r-{cur['kind']}'>{text}</span></span>"
+
+    def render_words(word_ids):
+        pieces, cur, buf = [], None, []
+        for gidx in word_ids:
             if gidx in trim_ins:
-                flush()
-                cur = None
+                pieces.append(emit(cur, buf)); buf = []
                 pieces.extend(trim_ins[gidx])
             r = per[gidx]
             if r is not cur:
-                flush()
-                cur = r
+                pieces.append(emit(cur, buf)); buf = []; cur = r
             buf.append(gidx)
-        flush()
-        body = "".join(pieces)
+        pieces.append(emit(cur, buf))
+        return "".join(pieces)
+
+    out = []
+    for para in paras:
+        if para["words"] is None:
+            txt = seek_at(para["ts"], "txt", esc(para["text"]))
+            out.append(f"<div class='tp'>{txt}</div>")
+            continue
+        # 適当な長さ（文末。！？ または 40字）でチャンク化。各チャンクをクリック可能に。
+        chunks, cur = [], []
+        for gidx in para["words"]:
+            cur.append(gidx)
+            tok = toks[gidx]
+            if (any(p in tok for p in "。！？") and len(cur) >= 8) or len(cur) >= 40:
+                chunks.append(cur); cur = []
+        if cur:
+            chunks.append(cur)
+        parts = []
+        for ch in chunks:
+            inner = render_words(ch)
+            parts.append(seek_at(gmid[ch[0]], "txt", inner))
+        body = "".join(parts)
         if body.strip():
-            out.append(f"<div class='tp'>{ts_span(para['ts'])}{body}</div>")
+            out.append(f"<div class='tp'>{body}</div>")
     return "".join(out)
 
 
@@ -502,7 +534,8 @@ LEGEND = (
     "<span class='sw r-fact'>⚠ 事実確認</span>　"
     "<span class='sw r-exclude'>⬛ 候補外</span>　"
     "<span class='sw r-quote'>象徴的セリフ</span>　"
-    "<span class='sw chip-trim' style='color:#fff'>⏱ 詰め候補(無音)</span></div>"
+    "<span class='trim'>|← 詰め候補 →|</span> / <span class='trim done'>|← 詰め済み →|</span>"
+    "　<span class='meta'>（理由は該当箇所の上の行間に表示・本文/タイムスタンプ/詰めはクリックで頭出し）</span></div>"
 )
 
 
@@ -587,7 +620,9 @@ def render_id(idv):
 
         # 切り出し全文（すべての注釈を本文中に）
         quotes = (cand or {}).get("highlight_quotes") or []
-        tr_html = render_transcript(d["tsegments"], s, e, regions, quotes, gaps, drops, f"vid{idx}")
+        trim_done = bool(segfolder) and os.path.isfile(
+            os.path.join(DATA_DIR, idv, "contents", segfolder, "final_orig.mp4"))
+        tr_html = render_transcript(d["tsegments"], s, e, regions, quotes, gaps, drops, f"vid{idx}", trim_done)
         parts.append("<div class='transcript'><h3>切り出し全文</h3>"
                      + (tr_html or "<p class='meta'>文字起こしなし</p>") + "</div>")
         parts.append("</div>")
