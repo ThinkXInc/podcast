@@ -63,6 +63,8 @@ video { width: 100%; max-width: 860px; display: block; border-radius: 6px;
 .tp { margin:.5rem 0; line-height:1.5; }
 .ts { color:#94a3b8; font-size:.78rem; font-variant-numeric:tabular-nums;
       display:block; margin-bottom:.02rem; }
+.ts-link { cursor:pointer; color:#2563eb; }
+.ts-link:hover { text-decoration:underline; }
 
 .chip { display:inline; font-size:.72rem; font-weight:700; padding:0 .3rem;
         border-radius:4px; margin:0 .2rem; white-space:normal; }
@@ -116,7 +118,11 @@ def page(title, body):
         "<!doctype html><html lang='ja'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"<title>{esc(title)}</title><style>{PAGE_CSS}</style></head>"
-        f"<body>{body}</body></html>"
+        f"<body>{body}"
+        "<script>function seekTo(id,t){var v=document.getElementById(id);"
+        "if(!v)return;v.currentTime=t;v.play();"
+        "v.scrollIntoView({block:'center',behavior:'smooth'});}</script>"
+        "</body></html>"
     ).encode("utf-8")
 
 
@@ -199,7 +205,44 @@ def _overlap(a0, a1, b0, b1):
     return max(0.0, min(a1, b1) - max(a0, b0))
 
 
-def build_regions(sg, cand, fact_checks, exclude_zones, cut_speakers=None, cut_manual=None):
+def _seg_speaker(tsegments, a, b):
+    """[a,b] に最も重なる transcript セグメントの話者を返す。"""
+    best, bestov = None, 0.0
+    for ts in tsegments or []:
+        t0, t1 = ts.get("start"), ts.get("end")
+        if t0 is None or t1 is None:
+            continue
+        ov = _overlap(a, b, t0, t1)
+        if ov > bestov:
+            bestov, best = ov, ts.get("speaker")
+    return best
+
+
+def _drop_reason(a, b, tsegments, cut_manual):
+    """カット済み区間の理由を簡潔に返す（手動カテゴリ優先、無ければ話者判定）。"""
+    for m in cut_manual or []:
+        span = min(b - a, m["end"] - m["start"])
+        if _overlap(a, b, m["start"], m["end"]) >= 0.5 * max(0.1, span):
+            c, r = m.get("category", ""), m.get("reason", "")
+            return (c + "：" + r) if (c and r) else (c or r or "確定カット")
+    spk = _seg_speaker(tsegments, a, b)
+    if spk and not str(spk).endswith("01"):
+        n = str(spk).split("_")[-1].lstrip("0") or "?"
+        return f"会話相手(Sp{n})の発言"
+    return "確定カット"
+
+
+def to_final(t, s, drops):
+    """元音源時刻 t を、その区間の final 動画時刻へ（区間開始を引き、途中のdrop分を差し引く）。"""
+    ft = max(0.0, t - s)
+    for d0, d1 in drops:
+        lo, hi = max(d0, s), min(d1, t)
+        if hi > lo:
+            ft -= (hi - lo)
+    return max(0.0, ft)
+
+
+def build_regions(sg, cand, fact_checks, exclude_zones, cut_speakers=None, cut_manual=None, tsegments=None):
     """本文に重ねる時間区間を優先度付きで返す（元音源タイムライン）。
     優先度: done(7) > spk(6) > cutlist(6) > todo(4) > fact(3) > quote(2) > exclude(1)。"""
     s, e = sg["start_sec"], sg["end_sec"]
@@ -227,13 +270,9 @@ def build_regions(sg, cand, fact_checks, exclude_zones, cut_speakers=None, cut_m
                         "reason": m.get("reason", "")})
 
     for d0, d1 in drops:
-        reason = ""
-        for c in cand_cuts:
-            if _overlap(d0, d1, c["start_sec"], c["end_sec"]) > 0:
-                reason = c.get("reason", "")
-                break
+        reason = _drop_reason(d0, d1, tsegments, cut_manual)
         regions.append({"s": max(d0, s), "e": min(d1, e), "kind": "done",
-                        "prio": 7, "label": "✂ カット済み(確定)", "reason": reason})
+                        "prio": 7, "label": "✂ カット", "reason": reason})
 
     todo = []
     for c in cand_cuts:
@@ -373,26 +412,32 @@ def locate_trims(raw, char_gidx, gaps):
         if boundary >= len(char_gidx):
             continue
         gidx = char_gidx[boundary]
-        flag = g.get("flag", "")
-        muted = " muted" if flag != "review" else ""
-        lbl = "⏱ 詰め候補" if flag == "review" else "⏱ 空白(取りこぼし疑い)"
-        chip = (f"<span class='chip chip-trim{muted}'>{lbl} "
-                f"{g.get('duration', 0):.1f}秒</span>")
+        chip = (f"<span class='chip chip-trim'>⏱ 詰め候補(自然) "
+                f"-{g.get('duration', 0):.1f}秒</span>")
         ins.setdefault(gidx, []).append(chip)
     return ins
 
 
-def render_transcript(tsegments, s, e, regions, quotes, gaps):
+def render_transcript(tsegments, s, e, regions, quotes, gaps, drops=None, vid_id=None):
     paras, toks, gmid, raw, char_gidx = build_word_model(tsegments, s, e)
     per = assign_regions(toks, gmid, regions)
     overlay_quotes(per, raw, char_gidx, quotes)
     trim_ins = locate_trims(raw, char_gidx, gaps)
+    drops = drops or []
+
+    def ts_span(t):
+        # 原音時刻 t を final 動画時刻へ変換し、クリックでその動画を頭出し再生
+        if vid_id:
+            ft = to_final(t, s, drops)
+            return (f"<span class='ts ts-link' onclick=\"seekTo('{vid_id}',{ft:.2f})\">"
+                    f"▶ {fmt_time(t)}</span>")
+        return f"<span class='ts'>{fmt_time(t)}</span>"
 
     emitted_chip = set()
     out = []
     for para in paras:
         if para["words"] is None:
-            out.append(f"<div class='tp'><span class='ts'>{fmt_time(para['ts'])}</span>{esc(para['text'])}</div>")
+            out.append(f"<div class='tp'>{ts_span(para['ts'])}{esc(para['text'])}</div>")
             continue
         pieces = []
         cur = None
@@ -427,7 +472,7 @@ def render_transcript(tsegments, s, e, regions, quotes, gaps):
         flush()
         body = "".join(pieces)
         if body.strip():
-            out.append(f"<div class='tp'><span class='ts'>{fmt_time(para['ts'])}</span>{body}</div>")
+            out.append(f"<div class='tp'>{ts_span(para['ts'])}{body}</div>")
     return "".join(out)
 
 
@@ -485,12 +530,14 @@ def render_id(idv):
         dur = (e - s) - drop_sec
 
         regions, todo, facts = build_regions(sg, cand, d["fact_checks"], d["exclude_zones"],
-                                             d["cut_speakers"], d["cut_manual"])
+                                             d["cut_speakers"], d["cut_manual"], d["tsegments"])
         n_spk = len([b for b in d["cut_speakers"] if b.get("index") == idx])
         n_man = len([m for m in d["cut_manual"] if m.get("index") == idx])
         segfolder = seg_dirname(idv, idx, title)
         silseg = d["sil_by_index"].get(idx)
-        gaps = [g for g in (silseg or {}).get("gaps", []) if g.get("flag") != "keep_natural"]
+        # 自然詰めが実際に触るギャップ＝ likely_dropped(取りこぼし) を除き 1.5秒以上
+        gaps = [g for g in (silseg or {}).get("gaps", [])
+                if g.get("flag") != "likely_dropped" and g.get("duration", 0) >= 1.5]
 
         parts.append("<div class='seg'>")
         rank = cand.get("rank") if cand else None
@@ -504,7 +551,7 @@ def render_id(idv):
         )
 
         if segfolder and os.path.isfile(os.path.join(DATA_DIR, idv, "contents", segfolder, "final.mp4")):
-            parts.append(f"<video src='{media_url(idv, segfolder, 'final.mp4')}' controls preload='metadata'></video>")
+            parts.append(f"<video id='vid{idx}' src='{media_url(idv, segfolder, 'final.mp4')}' controls preload='metadata'></video>")
             links = [f"<a href='{media_url(idv, segfolder, fn)}'>{esc(lb)}</a>"
                      for fn, lb in MEDIA_FILES
                      if os.path.isfile(os.path.join(DATA_DIR, idv, "contents", segfolder, fn))]
@@ -540,7 +587,7 @@ def render_id(idv):
 
         # 切り出し全文（すべての注釈を本文中に）
         quotes = (cand or {}).get("highlight_quotes") or []
-        tr_html = render_transcript(d["tsegments"], s, e, regions, quotes, gaps)
+        tr_html = render_transcript(d["tsegments"], s, e, regions, quotes, gaps, drops, f"vid{idx}")
         parts.append("<div class='transcript'><h3>切り出し全文</h3>"
                      + (tr_html or "<p class='meta'>文字起こしなし</p>") + "</div>")
         parts.append("</div>")

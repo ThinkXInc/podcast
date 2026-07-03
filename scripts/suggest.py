@@ -102,8 +102,25 @@ def main():
         print("[suggest]   ※ gpt-5.5-pro は応答に数分かかることがあります。")
         print("[suggest]   ※ 料金を避けたい場合は、prompts/prompt_all.txt と transcript.txt を")
         print(f"[suggest]      ブラウザのGPT Proに貼って実行し、結果を data/{ID}/gptout.txt に保存してください。")
-        # APIモードでのみ文字起こしが必要
-        transcript = (outdir / "transcript.txt").read_text(encoding="utf-8")
+        # APIモードでのみ文字起こしが必要。
+        # GPTへは Notta精度の transcript.json（本文＋話者）を優先して送る。
+        # 話者を [大塚]/[相手] で明示すると、会話相手カットの規則にGPTが沿いやすい。
+        # transcript.json が話者を持たない旧形式なら transcript.txt にフォールバック。
+        tj = outdir / "transcript.json"
+        transcript = None
+        if tj.exists():
+            import json as _json
+            _segs = _json.loads(tj.read_text(encoding="utf-8")).get("segments", [])
+            if _segs and any(s.get("speaker") for s in _segs):
+                _lines = []
+                for s in _segs:
+                    _who = "大塚" if str(s.get("speaker") or "").endswith("01") else "相手"
+                    _t = (s.get("text") or "").strip()
+                    if _t:
+                        _lines.append(f"[{_who}] {_t}")
+                transcript = "\n".join(_lines)
+        if not transcript:
+            transcript = (outdir / "transcript.txt").read_text(encoding="utf-8")
         prompt_body = load_prompt("prompt_all.txt")
         resp = client.responses.create(
             model=MODEL,
