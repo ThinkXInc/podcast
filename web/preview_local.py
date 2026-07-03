@@ -574,8 +574,6 @@ def render_id(idv):
 
         regions, todo, facts = build_regions(sg, cand, d["fact_checks"], d["exclude_zones"],
                                              d["cut_speakers"], d["cut_manual"], d["tsegments"])
-        n_spk = len([b for b in d["cut_speakers"] if b.get("index") == idx])
-        n_man = len([m for m in d["cut_manual"] if m.get("index") == idx])
         segfolder = seg_dirname(idv, idx, title)
         silseg = d["sil_by_index"].get(idx)
         # 自然詰めが実際に触るギャップ＝ likely_dropped(取りこぼし) を除き 1.5秒以上
@@ -589,8 +587,10 @@ def render_id(idv):
             f"<h2><span class='rank'>確定{idx}</span>　{esc(title)}</h2>"
             f"<div class='meta'>{fmt_time(s)}〜{fmt_time(e)}　尺 約{fmt_time(dur)}"
             + (f"　(AI {rank}位)" if rank else "")
-            + f"　｜ カット済み {len(drops)}・会話相手 {n_spk}・カット例 {n_man}"
-            + f"・未決 {len(todo)}・事実確認 {len(facts)}・詰め候補 {len(gaps)}</div></div>"
+            + f"　｜ カット {len(drops)}区間(計{int(drop_sec)}秒)"
+            + (f"・未決 {len(todo)}" if todo else "")
+            + (f"・事実確認 {len(facts)}" if facts else "")
+            + (f"・詰め候補 {len(gaps)}" if gaps else "") + "</div></div>"
         )
 
         if segfolder and os.path.isfile(os.path.join(DATA_DIR, idv, "contents", segfolder, "final.mp4")):
