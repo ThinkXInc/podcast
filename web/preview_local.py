@@ -433,7 +433,7 @@ def locate_trims(raw, char_gidx, gaps, vid_id, applied):
         t = max(0.0, g.get("start_sec", 0) - 1.0)          # 詰め位置(final時刻)の直前から
         cls = "trim done" if applied else "trim"
         onclick = (f" onclick=\"event.stopPropagation();seekTo('{vid_id}',{t:.2f})\"" if vid_id else "")
-        chip = f"<span class='{cls}'{onclick}>|← {g.get('duration', 0):.1f}秒 →|</span>"
+        chip = f"<span class='{cls}'{onclick}>|← {g.get('duration', 0):.1f}s →|</span>"
         ins.setdefault(gidx, []).append(chip)
     return ins
 
@@ -534,7 +534,7 @@ LEGEND = (
     "<span class='sw r-fact'>⚠ 事実確認</span>　"
     "<span class='sw r-exclude'>⬛ 候補外</span>　"
     "<span class='sw r-quote'>象徴的セリフ</span>　"
-    "<span class='trim'>|← 詰め候補 →|</span> / <span class='trim done'>|← 詰め済み →|</span>"
+    "<span class='trim'>|← 2.0s →|</span>=詰め候補 / <span class='trim done'>|← 2.0s →|</span>=詰め済み"
     "　<span class='meta'>（理由は該当箇所の上の行間に表示・本文/タイムスタンプ/詰めはクリックで頭出し）</span></div>"
 )
 
