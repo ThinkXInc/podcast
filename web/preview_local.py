@@ -60,7 +60,7 @@ video { width: 100%; max-width: 860px; display: block; border-radius: 6px;
 /* 本文：行間を詰める */
 .transcript { margin-top:1rem; border-top:1px dashed #ccc6; padding-top:.6rem; }
 .transcript h3 { font-size:.9rem; margin:.2rem 0 .5rem; }
-.tp { margin:.55rem 0; line-height:2.0; }
+.tp { margin:.55rem 0; line-height:1.7; }
 .ts { color:#94a3b8; font-size:.78rem; font-variant-numeric:tabular-nums;
       display:block; margin-bottom:.02rem; }
 .ts-link { cursor:pointer; color:#2563eb; }
@@ -68,12 +68,9 @@ video { width: 100%; max-width: 860px; display: block; border-radius: 6px;
 /* 本文チャンク: クリックで直前から再生 */
 .txt { cursor:pointer; border-radius:3px; }
 .txt:hover { background:#2563eb14; box-shadow:0 0 0 2px #2563eb22; }
-/* 理由の注釈: 該当箇所の“上の行間”に置く（本文の流れを邪魔しない） */
-.ann { position:relative; }
-.ann-label { position:absolute; bottom:calc(100% - 3px); left:0;
-             font-size:.6rem; font-weight:700; white-space:nowrap;
-             max-width:52ch; overflow:hidden; text-overflow:ellipsis;
-             line-height:1; pointer-events:none; opacity:.9; }
+/* 理由の注釈: 該当箇所の直上に独立行で置く（本文の流れを邪魔しない・重ならない） */
+.ann-label { display:block; font-size:.62rem; font-weight:700; line-height:1.35;
+             margin:.15rem 0 0; opacity:.85; }
 .ann-done{ color:#1d4ed8; } .ann-todo{ color:#cc0044; }
 .ann-fact{ color:#ea580c; } .ann-exclude{ color:#6b7280; }
 .ann-spk{ color:#0d9488; } .ann-cutlist{ color:#b91c1c; }
