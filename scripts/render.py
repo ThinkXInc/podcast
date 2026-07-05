@@ -215,6 +215,12 @@ def main():
     segs = json.loads(seg_path.read_text(encoding="utf-8")).get("segments", [])
     if not segs:
         print("[render] segments が空。"); sys.exit(1)
+    # 特定セグメントだけ再renderしたい場合: 環境変数 RENDER_ONLY="1,7"（index指定）
+    only = os.environ.get("RENDER_ONLY", "").strip()
+    if only:
+        keep = {int(x) for x in only.split(",") if x.strip().isdigit()}
+        segs = [s for s in segs if s.get("index") in keep]
+        print(f"[render] RENDER_ONLY={only} → {len(segs)} セグメントのみ処理")
 
     media = find_media(outdir, ID, sys.argv[2] if len(sys.argv) > 2 else None)
     if not media or not media.exists():
