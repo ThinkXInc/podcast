@@ -132,11 +132,16 @@ def main():
     if seg_path.exists():
         segments = json.loads(seg_path.read_text(encoding="utf-8")).get("segments", [])
 
-    # 候補外ゾーン（グレーで伏せる）: suggest.py が exclude_zones.json に出す
+    # 候補外という分類は廃止（D-014）。exclude_zones は assign_cut_ids.py が
+    # カット推奨として cut_decisions.json に取り込むため、PDFでは描かない。
     exclude_zones = []
-    ez_path = outdir / "exclude_zones.json"
-    if ez_path.exists():
-        exclude_zones = json.loads(ez_path.read_text(encoding="utf-8")).get("exclude_zones", [])
+
+    # カット推奨の C番号・判断状況（scripts/assign_cut_ids.py が出す）
+    cutdec_map = {}
+    cd_path = outdir / "cut_decisions.json"
+    if cd_path.exists():
+        for _c in json.loads(cd_path.read_text(encoding="utf-8")).get("cuts", []):
+            cutdec_map[(round(float(_c["start_sec"]), 1), round(float(_c["end_sec"]), 1))] = _c
 
     PAGE_W = doc[0].rect.width
 
@@ -321,14 +326,34 @@ def main():
 
     def underline_cut(c_st, c_en, cut):
         """要件2: カット推奨区間を強く目立たせる。
-        該当文に黄色ハイライト＋太い濃赤下線＋「」、直下に大きい理由ラベル。"""
+        該当文に黄色ハイライト＋太い濃赤下線＋「」、直下に大きい理由ラベル。
+        C番号(cut_decisions.json)があれば見出しの前に付け、判断済みなら区別する。"""
         st = cut.get("start_sec", c_st)
         reason = cut.get("reason", "")
         quote = (cut.get("quote") or "").strip()
+        cd = cutdec_map.get((round(float(cut.get("start_sec", c_st)), 1),
+                             round(float(cut.get("end_sec", c_en)), 1))) or {}
+        cid = cd.get("cid", "")
+        cid_pre = (cid + " ") if cid else ""
+        status = cd.get("status", "pending")
         ns = nearest(index, st)
         sp = ns[1]
         anchor = ns[2]
         page = doc[sp]
+        if status == "keep":
+            # 「残す」と判断済み → 赤の強調はせず、判断済みラベルだけ置く
+            # （理由は書かない。オーナーが理由を述べた時だけ note を併記）
+            note = (cd.get("note") or "").strip()
+            lbl = f"{cid_pre}残す(判断済)" + (f": {note}" if note else "")
+            fs = 8
+            yy = anchor.y1 + 1.5
+            for ln in wrap_lines(lbl, fs, PAGE_W - 130):
+                w = jpfont.text_length(ln, fs)
+                page.draw_rect(fitz.Rect(56, yy - 0.5, 56 + w + 8, yy + fs + 1.5),
+                               color=None, fill=(0.36, 0.36, 0.36), fill_opacity=1.0, width=0)
+                T(page, 60, yy + fs - 0.3, ln, fs, (1, 1, 1))
+                yy += fs + 2.5
+            return
         if quote:
             q = quote[:40]
             for pg in [sp, min(sp + 1, doc.page_count - 1)]:
@@ -349,7 +374,12 @@ def main():
                     page = doc[pg]; anchor = rects[-1]
                     break
         # 理由ラベル: 行間に収まるよう小さめ・縦パディング詰め・少し上げる
-        lbl = f"✂ カット推奨: {reason}"
+        # カット決定済みはラベルのみ（オーナーが理由を述べた時だけ note を併記）
+        if status == "cut":
+            note = (cd.get("note") or "").strip()
+            lbl = f"{cid_pre}カット指示" + (f": {note}" if note else "")
+        else:
+            lbl = f"{cid_pre}カット推奨: {reason}"
         fs = 8
         ls = wrap_lines(lbl, fs, PAGE_W - 130)
         yy = anchor.y1 + 1.5
@@ -379,7 +409,7 @@ def main():
     T(cover, 48, y, "Notta全文PDFの上に、AIの切り出し案を重ねた校正用です。", 10, (0, 0, 0)); y += 17
     for txt, col in [("赤＝AI本命候補（区間を薄い帯でハイライト＋▼▲マーカー）", RED),
                      ("橙＝AI補助候補（短尺・番外・細かいもの。左罫線＋▼▲）", ORANGE),
-                     ("✂ 濃赤＝カット推奨（該当文に下線＋「」、理由を併記）", CUT),
+                     ("濃赤＝カット推奨（該当文に下線＋「」、理由を併記）", CUT),
                      ("⬛ グレー＝候補外（チェック不要。理由を併記）", (0.45, 0.45, 0.45)),
                      ("青＝チャットでの確定・修正（あれば反映）。除外は ✂", BLUE)]:
         T(cover, 48, y, txt, 9.5, col); y += 14

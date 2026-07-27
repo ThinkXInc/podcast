@@ -27,101 +27,130 @@ DATA_DIR = os.path.realpath(
 PORT = int(os.environ.get("PORT", "8010"))
 
 MEDIA_FILES = [
-    ("final.mp4", "字幕あり (final.mp4)"),
-    ("video_nosub.mp4", "字幕なし (video_nosub.mp4)"),
-    ("audio.m4a", "音声 (audio.m4a)"),
-    ("segment.ass", "字幕データ (.ass)"),
+    ("final.mp4", "mp4(字幕あり)"),
+    ("video_nosub.mp4", "mp4(字幕なし)"),
+    ("audio.m4a", "m4a"),
+    ("segment.ass", ".ass"),
 ]
 
 PAGE_CSS = """
-:root { color-scheme: light dark; }
-body { font-family: -apple-system, "Hiragino Sans", sans-serif; margin: 1.5rem auto;
-       max-width: 960px; padding: 0 1rem; line-height: 1.6; }
-h1 { font-size: 1.4rem; } h2 { font-size: 1.1rem; margin: 0 0 .2rem; }
+/* 既定はダーク（従来のレイアウト）。data-theme="light" でライトに切り替え */
+:root { color-scheme: dark; }
+:root[data-theme="light"] { color-scheme: light; }
+body { font-family: -apple-system, "Hiragino Sans", sans-serif; margin: 24px auto;
+       max-width: 960px; padding: 0 16px; line-height: 1.6;
+       background:#1b1b1b; color:#e8e8e8; }
+:root[data-theme="light"] body { background:#ffffff; color:#111111; }
+h1 { font-size: 22px; } h2 { font-size: 18px; margin: 0 0 3px; }
 a { color: #2563eb; text-decoration: none; } a:hover { text-decoration: underline; }
-.crumb { font-size: .85rem; margin-bottom: 1rem; }
-.meta { color: #888; font-size: .85rem; }
+.crumb { font-size: 14px; margin-bottom: 16px; }
+.crumb a { color:#8c8c8c; }
+.meta { color: #ffffff; font-size: 15px; }
+:root[data-theme="light"] .meta { color:#111111; }
+/* テーマ切替ボタン（右上・最小限） */
+.theme-btn { position:fixed; top:10px; right:12px; z-index:9; cursor:pointer;
+             font-size:13px; color:#6b7280; border:1px solid #6b728066;
+             border-radius:6px; padding:2px 8px; background:transparent; }
+/* ライトでは「沈む＝薄い」方向を反転（濃→淡） */
+:root[data-theme="light"] .box.summary { background:#f1f1f1; }
+:root[data-theme="light"] .r-donespk { color:#c2c2c2; }
+:root[data-theme="light"] .ann-donespk { color:#c2c2c2; }
+:root[data-theme="light"] .ann-keep { color:#b8b8b8; }
+:root[data-theme="light"] .trim.done { color:#c8c8c8; }
 ul.ids { list-style: none; padding: 0; }
-ul.ids li { padding: .55rem 0; border-bottom: 1px solid #ccc4; }
+ul.ids li { padding: 9px 0; border-bottom: 1px solid #ccc4; }
 
-.seg { border: 1px solid #ccc4; border-radius: 12px; padding: 1rem 1.2rem 1.3rem;
-       margin-bottom: 2.2rem; }
-.seghd { border-left: 5px solid #1d4ed8; padding-left: .7rem; margin-bottom: .8rem; }
-.seghd .rank { color:#1d4ed8; font-weight:700; }
+.seg { border: 1px solid #ccc4; border-radius: 12px; padding: 16px 19px 21px;
+       margin-bottom: 35px; }
+.seghd { padding-left: 11px; margin-bottom: 13px; }
+.seghd .rank { font-weight:700; }
 video { width: 100%; max-width: 860px; display: block; border-radius: 6px;
-        background: #000; margin: .3rem 0 .7rem; }
-.dl { font-size: .82rem; margin-bottom: .8rem; } .dl a { margin-right: 1rem; }
+        background: #000; margin: 5px 0 11px; }
+.dl { font-size: 13px; margin-bottom: 13px; }
+.dl a { margin-right: 16px; color: inherit; }
 
 /* 要約・レビュー：少し行間をつける */
-.box.summary { background:#3b82f611; border-left:3px solid #3b82f6; border-radius:8px;
-               padding:.7rem .9rem; margin:.6rem 0; font-size:.9rem; line-height:1.9; }
-.box.summary p { margin:.55rem 0; }
+.box.summary { background:#292929; border-radius:5px;
+               padding:11px 14px; margin:10px 0; font-size:14px; line-height:1.9; }
+.box.summary p { margin:9px 0; }
 
 /* 本文：行間を詰める */
-.transcript { margin-top:1rem; border-top:1px dashed #ccc6; padding-top:.6rem; }
-.transcript h3 { font-size:.9rem; margin:.2rem 0 .5rem; }
-.tp { margin:.55rem 0; line-height:1.7; }
-.ts { color:#94a3b8; font-size:.78rem; font-variant-numeric:tabular-nums;
-      display:block; margin-bottom:.02rem; }
-.ts-link { cursor:pointer; color:#2563eb; }
+.transcript { margin-top:16px; border-top:1px dashed #ccc6; padding-top:10px; }
+.transcript h3 { font-size:14px; margin:3px 0 8px; }
+.tp { margin:9px 0; line-height:1.7; }
+.ts { color:#94a3b8; font-size:12px; font-variant-numeric:tabular-nums;
+      display:block; margin-bottom:0px; }
+.ts-link { cursor:pointer; color:#6b7280; }
 .ts-link:hover { text-decoration:underline; }
 /* 本文チャンク: クリックで直前から再生 */
 .txt { cursor:pointer; border-radius:3px; }
 .txt:hover { background:#2563eb14; box-shadow:0 0 0 2px #2563eb22; }
+/* いま再生中の箇所（hoverと同系だが少し強め） */
+.txt.playing { background:#2563eb2e; }
 /* 理由の注釈: 該当箇所の直上に独立行で置く（本文の流れを邪魔しない・重ならない） */
-.ann-label { display:block; font-size:.62rem; font-weight:700; line-height:1.35;
-             margin:.15rem 0 0; opacity:.85; }
-.ann-done{ color:#1d4ed8; } .ann-todo{ color:#cc0044; }
-.ann-fact{ color:#ea580c; } .ann-exclude{ color:#6b7280; }
-.ann-spk{ color:#0d9488; } .ann-cutlist{ color:#b91c1c; }
-/* 詰め: |← X秒 →| のみ。候補=紫 / 詰め済み=緑。クリックで直前から再生 */
-.trim { cursor:pointer; color:#7c3aed; font-weight:700; font-size:.74rem;
-        white-space:nowrap; padding:0 .15rem; border-radius:3px;
+.ann-label { display:block; font-size:10px; font-weight:700; line-height:1.35;
+             margin:2px 0 0; opacity:.85; }
+.ann-done{ color:#888888b3; } .ann-todo{ color:#e7a7bc; }
+.ann-fact{ color:#c9eb00; }
+.ann-spk{ color:#6b7280; } .ann-donespk{ color:#575757; }
+/* 詰め: |← X秒 →| のみ。目立たないグレー（候補=グレー / 詰め済み=より見えにくい薄グレー）。クリックで直前から再生 */
+.trim { cursor:pointer; color:#9ca3af; font-weight:700; font-size:12px;
+        white-space:nowrap; padding:0 2px; border-radius:3px;
         font-variant-numeric:tabular-nums; }
-.trim:hover { background:#7c3aed22; text-decoration:underline; }
-.trim.done { color:#059669; }
-.trim.done:hover { background:#05966922; }
+.trim:hover { background:#9ca3af22; text-decoration:underline; }
+.trim.done { color:#575757; }
+.trim.done:hover { background:#9ca3af22; }
 
-.chip { display:inline; font-size:.72rem; font-weight:700; padding:0 .3rem;
-        border-radius:4px; margin:0 .2rem; white-space:normal; }
-/* カット済み(確定) = 青・取り消し線 */
-.r-done { text-decoration:line-through; color:#1d4ed8; background:#1d4ed812;
-          text-decoration-thickness:2px; }
-.chip-done { background:#1d4ed8; color:#fff; }
-/* カット推奨(未決) = 黄ハイライト＋濃赤下線 */
-.r-todo { background:#fde04788; border-bottom:2px solid #cc0044; }
-.chip-todo { background:#cc0044; color:#fff; }
-/* 事実確認 = 橙 */
-.r-fact { background:#fed7aa88; border-bottom:2px dotted #ea580c; }
+.chip { display:inline; font-size:12px; font-weight:700; padding:0 5px;
+        border-radius:4px; margin:0 3px; white-space:normal; }
+/* 線（下線・取り消し線・背景帯）は引かない。色だけで判別する。
+   確定＝見えにくいグレー / 未決＝分類ごとの色 */
+/* カット済み(確定) = ごく薄いグレー（読み飛ばし用） */
+.r-done { color:#888888b3; }
+.chip-done { background:#9ca3af; color:#fff; }
+/* カット推奨(未決・gpt) = ピンク #e7a7bc（ラベルも本文も） */
+.r-todo { color:#e7a7bc; }
+.chip-todo { background:#6b7280; color:#fff; }
+/* 会話相手(未決) = #30d8ff（ラベルも本文も） */
+.r-spkopen { color:#30d8ff; }
+.ann-spkopen { color:#30d8ff; }
+/* その他の分類(未決) = 紫系 */
+.r-other { color:#cdb4e2; }
+.ann-other { color:#cdb4e2; }
+/* 事実確認 = #c9eb00（ラベルも本文も。下線・背景なし） */
+.r-fact { color:#c9eb00; }
 .chip-fact { background:#ea580c; color:#fff; }
-/* 候補外 = グレー */
-.r-exclude { background:#9ca3af44; color:#6b7280; font-style:italic;
-             text-decoration:line-through; }
-.chip-exclude { background:#6b7280; color:#fff; }
-/* 会話相手の発言 = ティール（基本カット対象） */
-.r-spk { background:#5eead444; border-bottom:2px dashed #0d9488; }
-.chip-spk { background:#0d9488; color:#fff; }
-/* カット例（蓄積リスト） = 濃い赤 */
-.r-cutlist { background:#fca5a5aa; border-bottom:2px solid #b91c1c; }
-.chip-cutlist { background:#b91c1c; color:#fff; }
-/* 象徴的セリフ = ライトブルーのハイライト（下線なし） */
-.r-quote { background:#7dd3fc88; border-radius:3px; }
+/* 会話相手の発言（cutlist由来・未処理） = #30d8ff */
+.r-spk { color:#30d8ff; }
+.chip-spk { background:#6b7280; color:#fff; }
+/* カット済み(会話相手の発言) = 削除確定なので沈ませる（#575757 ユーザー指定） */
+.r-donespk { color:#575757; }
+/* カット/残す 確定ボタン（未決の注釈行に置く） */
+.dbtn button { font-size:11px; margin-left:6px; padding:0 8px; cursor:pointer;
+               background:transparent; color:inherit; border:1px solid #6b728088;
+               border-radius:4px; line-height:1.6; }
+.dbtn button:hover { background:#6b728033; }
+/* 判断済み: 残す = ただのグレーのテキスト #5d5d5d（ユーザー指定）。本文への下線などは付けない */
+.ann-keep { color:#5d5d5d; }
+/* オーナー評価 = 金の星（見出し直下）。根拠の発言を併記 */
+.rating { font-size:15px; margin:2px 0 2px; }
+.rating .stars { color:#f59e0b; letter-spacing:.05em; }
+.rating .rq { color:#94a3b8; font-size:13px; }
+.rating.unrated { color:#94a3b8; font-size:13px; }
+/* 象徴的セリフ = 色なしの太字（モノトーン方針） */
+.r-quote { font-weight:700; }
 /* 詰め候補(無音) = 紫の点マーカー（本文中に差し込む） */
-.chip-trim { background:#7c3aed; color:#fff; font-size:.7rem; }
+.chip-trim { background:#7c3aed; color:#fff; font-size:11px; }
 .chip-trim.muted { background:#a78bfa; }
 
-.legend { font-size:.82rem; background:#8881; border-radius:8px; padding:.6rem .8rem;
-          margin:.6rem 0 1.2rem; line-height:2; }
-.legend span.sw { padding:0 .3rem; border-radius:4px; margin-right:.15rem; font-weight:700; }
-.note { background:#f59e0b22; border-left:3px solid #f59e0b; padding:.5rem .8rem;
-        border-radius:4px; font-size:.85rem; margin:.6rem 0; }
-/* セグメント・ジャンプナビ（sticky） */
-.segnav { position:sticky; top:0; z-index:5; display:flex; flex-wrap:wrap; gap:.3rem;
-          background:Canvas; border-bottom:1px solid #8884; padding:.4rem 0; margin-bottom:1rem; }
-.segnav a { font-size:.8rem; padding:.15rem .5rem; border:1px solid #8886; border-radius:6px;
-            color:inherit; white-space:nowrap; }
-.segnav a:hover { background:#2563eb22; text-decoration:none; }
-.seg { scroll-margin-top:2.6rem; }
+/* 目次（縦並び。タイトル・尺・★＋ハイライト原文） */
+.toc { margin:10px 0 22px; }
+.toc-item { line-height:1.9; font-size:18px; margin-top:8px; }
+.toc-item a { color:inherit; }
+.toc-item a:hover { text-decoration:underline; }
+.toc-q { font-size:14px; color:#9ca3af; line-height:1.7; margin-left:10px; }
+.toc-sum { font-size:14px; line-height:1.8; margin:2px 0 4px 10px; opacity:.92; }
+.seg { scroll-margin-top:42px; }
 """
 
 
@@ -140,11 +169,33 @@ def page(title, body):
     return (
         "<!doctype html><html lang='ja'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-        f"<title>{esc(title)}</title><style>{PAGE_CSS}</style></head>"
-        f"<body>{body}"
-        "<script>function seekTo(id,t){var v=document.getElementById(id);"
-        "if(!v)return;v.currentTime=t;v.play();"
-        "v.scrollIntoView({block:'center',behavior:'smooth'});}</script>"
+        f"<title>{esc(title)}</title><style>{PAGE_CSS}</style>"
+        "<script>document.documentElement.dataset.theme="
+        "localStorage.getItem('theme')||'light';</script></head>"
+        f"<body><button class='theme-btn' onclick=\"var r=document.documentElement,"
+        "t=r.dataset.theme==='dark'?'light':'dark';r.dataset.theme=t;"
+        "localStorage.setItem('theme',t);\">dark / light</button>"
+        f"{body}"
+        "<script>"
+        # クリックしてもスクロールはしない
+        "function seekTo(id,t){var a=document.getElementById('orig');if(a)a.pause();"
+        "var v=document.getElementById(id);if(!v)return;v.currentTime=t;v.play();}"
+        # カット済み区間は元音源で再生して内容を確認する
+        "function seekOrig(t){document.querySelectorAll('video').forEach(function(v){v.pause();});"
+        "var a=document.getElementById('orig');if(!a)return;a.currentTime=t;a.play();}"
+        "function decide(cid,action){var idv=new URLSearchParams(location.search).get('id');"
+        "fetch('/decide?id='+encodeURIComponent(idv)+'&cid='+cid+'&action='+action)"
+        ".then(function(){location.reload();});}"
+        # 再生中の箇所の背景ハイライト
+        "document.addEventListener('timeupdate',function(e){var el=e.target,sel,attr;"
+        "if(el.tagName==='VIDEO'){sel=\"[data-v='\"+el.id+\"']\";attr='data-t';}"
+        "else if(el.id==='orig'){sel='[data-ot]';attr='data-ot';}else return;"
+        "if(el.paused)return;var t=el.currentTime,best=null,bt=-1;"
+        "document.querySelectorAll(sel).forEach(function(sp){"
+        "var v=parseFloat(sp.getAttribute(attr));if(v<=t+0.01&&v>bt){bt=v;best=sp;}});"
+        "document.querySelectorAll('.playing').forEach(function(x){x.classList.remove('playing');});"
+        "if(best&&t-bt<90)best.classList.add('playing');},true);"
+        "</script>"
         "</body></html>"
     ).encode("utf-8")
 
@@ -195,6 +246,8 @@ def load_id_data(idv):
     # カット候補リストは ID ごと（data/<ID>/cutlist.json）。CUTLIST 環境変数で上書き可。
     cutlist_path = os.environ.get("CUTLIST") or os.path.join(base, "cutlist.json")
     cutlist = _load_json(cutlist_path, {"speakers": [], "manual": []})
+    cutdec = _load_json(os.path.join(base, "cut_decisions.json"), {"cuts": []})
+    ratings = _load_json(os.path.join(base, "ratings.json"), {"ratings": []})
     return {
         "segments": segments,
         "cand_by_title": cand_by_title,
@@ -205,6 +258,8 @@ def load_id_data(idv):
         "tsegments": tr.get("segments", []),
         "cut_speakers": cutlist.get("speakers", []),
         "cut_manual": cutlist.get("manual", []),
+        "cut_decisions": cutdec.get("cuts", []),
+        "ratings_by_index": {r.get("index"): r for r in ratings.get("ratings", [])},
     }
 
 
@@ -265,7 +320,8 @@ def to_final(t, s, drops):
     return max(0.0, ft)
 
 
-def build_regions(sg, cand, fact_checks, exclude_zones, cut_speakers=None, cut_manual=None, tsegments=None):
+def build_regions(sg, cand, fact_checks, exclude_zones, cut_speakers=None, cut_manual=None, tsegments=None,
+                  cut_decisions=None):
     """本文に重ねる時間区間を優先度付きで返す（元音源タイムライン）。
     優先度: done(7) > spk(6) > cutlist(6) > todo(4) > fact(3) > quote(2) > exclude(1)。"""
     s, e = sg["start_sec"], sg["end_sec"]
@@ -280,33 +336,49 @@ def build_regions(sg, cand, fact_checks, exclude_zones, cut_speakers=None, cut_m
         if _overlap(b["start"], b["end"], s, e) <= 0:
             continue
         regions.append({"s": max(b["start"], s), "e": min(b["end"], e), "kind": "spk",
-                        "prio": 6, "label": f"🗣 会話相手(Sp{b.get('spk','?')}) カット対象",
-                        "reason": ""})
-
-    # 手動カット例（ユーザー指示で蓄積）
-    man = [m for m in (cut_manual or []) if m.get("index") == idx]
-    for m in man:
-        if _overlap(m["start"], m["end"], s, e) <= 0:
-            continue
-        regions.append({"s": max(m["start"], s), "e": min(m["end"], e), "kind": "cutlist",
-                        "prio": 6, "label": f"✂ カット例({m.get('category','')})",
-                        "reason": m.get("reason", "")})
+                        "prio": 6, "label": "会話相手", "reason": ""})
 
     for d0, d1 in drops:
         reason = _drop_reason(d0, d1, tsegments, cut_manual)
-        regions.append({"s": max(d0, s), "e": min(d1, e), "kind": "done",
-                        "prio": 7, "label": "✂ カット", "reason": reason})
+        # 会話相手の発言カットは通常カットと表示を分ける（ラベルは「会話相手」のみ）
+        if reason.startswith("会話相手"):
+            regions.append({"s": max(d0, s), "e": min(d1, e), "kind": "donespk",
+                            "prio": 7, "label": "会話相手", "reason": ""})
+        else:
+            regions.append({"s": max(d0, s), "e": min(d1, e), "kind": "done",
+                            "prio": 7, "label": "カット", "reason": reason})
 
+    # カット候補はすべて cut_decisions.json（C番号・分類・判断状況）から描く。
+    # 初期状態は全件オープン（勝手にカットしない）。オーナーが カット/残す ボタンで確定する。
+    # 確定＝見えにくいグレー / 未決＝分類ごとの色（gpt=ピンク, speaker=#30d8ff, その他=紫系）
     todo = []
-    for c in cand_cuts:
-        cs, ce = c["start_sec"], c["end_sec"]
+    for cd in (cut_decisions or []):
+        cs, ce = float(cd["start_sec"]), float(cd["end_sec"])
         if _overlap(cs, ce, s, e) <= 0:
             continue
-        if any(_overlap(cs, ce, d0, d1) >= 0.5 * (ce - cs) for d0, d1 in drops):
+        cid = cd.get("cid", "")
+        status = cd.get("status", "pending")
+        cat = cd.get("category", "gpt")
+        if status == "keep":
+            regions.append({"s": max(cs, s), "e": min(ce, e), "kind": "keep", "prio": 4,
+                            "label": f"{cid} 残す(判断済)", "reason": cd.get("note", "")})
             continue
-        regions.append({"s": max(cs, s), "e": min(ce, e), "kind": "todo", "prio": 4,
-                        "label": "✂ カット推奨(未決)", "reason": c.get("reason", "")})
-        todo.append(c)
+        if status == "cut":
+            if any(_overlap(cs, ce, d0, d1) >= 0.5 * (ce - cs) for d0, d1 in drops):
+                continue  # 既に drops で薄グレー表示されている
+            regions.append({"s": max(cs, s), "e": min(ce, e), "kind": "done", "prio": 4,
+                            "label": f"{cid} カット指示", "reason": cd.get("note", "")})
+            continue
+        # 未決: 分類ごとの色＋カット/残すボタン
+        if cat == "speaker":
+            kind, name, reason = "spkopen", "会話相手(未決)", ""
+        elif cat == "gpt":
+            kind, name, reason = "todo", "カット推奨(未決)", cd.get("reason", "")
+        else:
+            kind, name, reason = "other", f"{esc(cat)}(未決)", cd.get("reason", "")
+        regions.append({"s": max(cs, s), "e": min(ce, e), "kind": kind, "prio": 4,
+                        "label": f"{cid} {name}", "reason": reason, "cid": cid})
+        todo.append(cd)
 
     facts = []
     for fc in fact_checks:
@@ -317,12 +389,7 @@ def build_regions(sg, cand, fact_checks, exclude_zones, cut_speakers=None, cut_m
                         "reason": fc.get("issue", "")})
         facts.append(fc)
 
-    for ez in exclude_zones:
-        if _overlap(ez["start_sec"], ez["end_sec"], s, e) <= 0:
-            continue
-        regions.append({"s": max(ez["start_sec"], s), "e": min(ez["end_sec"], e),
-                        "kind": "exclude", "prio": 1, "label": "⬛ 候補外",
-                        "reason": ez.get("reason", "")})
+    # 候補外という分類は廃止（exclude_zones は assign_cut_ids がカット推奨として取り込む）
 
     return regions, todo, facts
 
@@ -442,7 +509,8 @@ def locate_trims(raw, char_gidx, gaps, vid_id, applied):
     return ins
 
 
-def render_transcript(tsegments, s, e, regions, quotes, gaps, drops=None, vid_id=None, applied=False):
+def render_transcript(tsegments, s, e, regions, quotes, gaps, drops=None, vid_id=None, applied=False,
+                      seg_no=None):
     paras, toks, gmid, raw, char_gidx = build_word_model(tsegments, s, e)
     per = assign_regions(toks, gmid, regions)
     overlay_quotes(per, raw, char_gidx, quotes)
@@ -451,11 +519,17 @@ def render_transcript(tsegments, s, e, regions, quotes, gaps, drops=None, vid_id
     emitted_chip = set()
 
     def seek_at(t, cls, inner):
-        """inner を、原音時刻 t の 1.5秒前(final)から再生するクリック可能spanで包む。"""
+        """inner をクリック可能spanで包む。カット済み区間内なら元音源(seekOrig)を、
+        それ以外は final 動画を、原音時刻 t の少し前から再生する。
+        data-v/data-t（動画）・data-ot（元音源）は再生位置ハイライト用。"""
         if not vid_id:
             return inner
-        ft = max(0.0, to_final(t, s, drops) - 1.5)
-        return f"<span class='{cls}' onclick=\"seekTo('{vid_id}',{ft:.2f})\">{inner}</span>"
+        if any(d0 <= t < d1 for d0, d1 in drops):
+            return (f"<span class='{cls}' data-ot='{t:.2f}'"
+                    f" onclick=\"seekOrig({max(0.0, t - 1.0):.2f})\">{inner}</span>")
+        ft = to_final(t, s, drops)
+        return (f"<span class='{cls}' data-v='{vid_id}' data-t='{ft:.2f}'"
+                f" onclick=\"seekTo('{vid_id}',{max(0.0, ft - 1.5):.2f})\">{inner}</span>")
 
     def emit(cur, buf):
         if not buf:
@@ -471,7 +545,12 @@ def render_transcript(tsegments, s, e, regions, quotes, gaps, drops=None, vid_id
             emitted_chip.add(id(cur))
             rs = esc(cur.get("reason", ""))
             full = esc(cur["label"]) + (f"：{rs}" if rs else "")
-            label = f"<span class='ann-label ann-{cur['kind']}' title=\"{full}\">{full}</span>"
+            btn = ""
+            if cur.get("cid"):  # 未決 → オーナーがその場で確定するボタン
+                btn = ("<span class='dbtn'>"
+                       f"<button onclick=\"decide('{cur['cid']}','cut')\">カット</button>"
+                       f"<button onclick=\"decide('{cur['cid']}','keep')\">残す</button></span>")
+            label = f"<span class='ann-label ann-{cur['kind']}' title=\"{full}\">{full}{btn}</span>"
         return f"<span class='ann'>{label}<span class='r-{cur['kind']}'>{text}</span></span>"
 
     def render_words(word_ids):
@@ -487,11 +566,31 @@ def render_transcript(tsegments, s, e, regions, quotes, gaps, drops=None, vid_id
         pieces.append(emit(cur, buf))
         return "".join(pieces)
 
+    def para_head(t, bno):
+        """発言ブロック頭の [セグ番号-ブロック連番] ＋時刻表示。
+        「[6-3] をカット」「⑥の 02:30 をカット」のように指示しやすくするためのもの。"""
+        ft = to_final(t, s, drops)
+        ftxt = fmt_time(ft)
+        stxt = fmt_time(t)
+        if vid_id and any(d0 <= t < d1 for d0, d1 in drops):
+            # カット済みブロック → 元音源で頭出し（カット内容の確認用）
+            link = (f"<span class='ts-link' onclick=\"seekOrig({max(0.0, t - 1.0):.2f})\">"
+                    f"{ftxt}</span>")
+        elif vid_id:
+            link = (f"<span class='ts-link' onclick=\"seekTo('{vid_id}',{max(0.0, ft - 0.5):.2f})\">"
+                    f"{ftxt}</span>")
+        else:
+            link = ftxt
+        bn = f"<b>[{seg_no}-{bno}]</b>　" if seg_no is not None else ""
+        return f"<span class='ts'>{bn}{link}　<span>({stxt})</span></span>"
+
     out = []
+    bno = 0
     for para in paras:
+        bno += 1
         if para["words"] is None:
             txt = seek_at(para["ts"], "txt", esc(para["text"]))
-            out.append(f"<div class='tp'>{txt}</div>")
+            out.append(f"<div class='tp'>{para_head(para['ts'], bno)}{txt}</div>")
             continue
         # 適当な長さ（文末。！？ または 40字）でチャンク化。各チャンクをクリック可能に。
         chunks, cur = [], []
@@ -508,7 +607,7 @@ def render_transcript(tsegments, s, e, regions, quotes, gaps, drops=None, vid_id
             parts.append(seek_at(gmid[ch[0]], "txt", inner))
         body = "".join(parts)
         if body.strip():
-            out.append(f"<div class='tp'>{body}</div>")
+            out.append(f"<div class='tp'>{para_head(para['ts'], bno)}{body}</div>")
     return "".join(out)
 
 
@@ -529,18 +628,6 @@ def render_index():
     return page("生成物チェック (ローカル preview)", body)
 
 
-LEGEND = (
-    "<div class='legend'><b>凡例（校正用PDF準拠・全文中に表示）</b>　"
-    "<span class='sw r-done'>✂ カット済み(確定)</span>　"
-    "<span class='sw r-spk'>🗣 会話相手(カット対象)</span>　"
-    "<span class='sw r-cutlist'>✂ カット例</span>　"
-    "<span class='sw r-todo'>✂ カット推奨(未決)</span>　"
-    "<span class='sw r-fact'>⚠ 事実確認</span>　"
-    "<span class='sw r-exclude'>⬛ 候補外</span>　"
-    "<span class='sw r-quote'>象徴的セリフ</span>　"
-    "<span class='trim'>|← 2.0s →|</span>=詰め候補 / <span class='trim done'>|← 2.0s →|</span>=詰め済み"
-    "　<span class='meta'>（理由は該当箇所の上の行間に表示・本文/タイムスタンプ/詰めはクリックで頭出し）</span></div>"
-)
 
 
 def render_id(idv):
@@ -551,19 +638,53 @@ def render_id(idv):
     parts = [
         "<div class='crumb'><a href='/'>← 一覧</a></div>",
         f"<h1>{esc(idv)}　生成物</h1>",
-        LEGEND,
     ]
-    if not trim_applied(idv, segments):
-        parts.append("<div class='note'>⚠ 無音詰め(最終工程)は未適用です（字幕は焼込済み）。"
-                     "全文中に<b>⏱ 詰め候補</b>を差し込んでいます。</div>")
+    # 元音源（無編集）。カット済み区間のクリック時にここから再生して内容を確認できるようにする
+    src_name = next((n for n in sorted(os.listdir(os.path.join(DATA_DIR, idv)))
+                     if n.lower().endswith(".m4a")), None)
+    if not src_name:
+        src_name = next((n for n in sorted(os.listdir(os.path.join(DATA_DIR, idv)))
+                         if n.lower().endswith(".mp4")), None)
+    if src_name:
+        parts.append(f"<audio id='orig' src='/media?p={urllib.parse.quote(idv + '/' + src_name)}'"
+                     " preload='none' style='display:none'></audio>")
+    # 並び順: オーナー評価の★が高い順。未評価は★1.5相当（★2以上の下・★0〜1の上）。同順位は index 順。
+    def seg_order(sg):
+        rt = d["ratings_by_index"].get(sg.get("index"))
+        stars = float(rt["stars"]) if rt and rt.get("stars") is not None else 1.5
+        return (-stars, sg.get("index", 0))
+    ordered = sorted(segments, key=seg_order)
 
-    # セグメント・ジャンプナビ（sticky）
-    nav = "".join(
-        f"<a href='#seg{sg['index']}'>{sg['index']}. {esc((sg.get('title') or '').split('／')[0])}</a>"
-        for sg in sorted(segments, key=lambda x: x.get("index", 0)))
-    parts.append(f"<div class='segnav'>{nav}</div>")
+    # 目次: タイトル・尺・オーナー評価(★と根拠)を縦に並べる
+    def dur_jp_of(sg):
+        s0, e0 = sg["start_sec"], sg["end_sec"]
+        dsec = sum(min(d1, e0) - max(d0, s0) for d0, d1 in (sg.get("drops") or []))
+        dm0, ds0 = divmod(int(round((e0 - s0) - dsec)), 60)
+        dh0, dm0 = divmod(dm0, 60)
+        return f"{dh0}時間{dm0}分{ds0}秒" if dh0 else f"{dm0}分{ds0}秒"
 
-    for sg in sorted(segments, key=lambda x: x.get("index", 0)):
+    toc = []
+    for sg in ordered:
+        i = sg["index"]
+        rt = d["ratings_by_index"].get(i)
+        st_html = ""
+        if rt and rt.get("stars") is not None:
+            st_n = max(0, min(5, int(rt["stars"])))
+            st_html = f"　<span class='stars'>{'★' * st_n}{'☆' * (5 - st_n)}</span>"
+            if rt.get("quote"):  # 理由を述べた評価だけ根拠が入っている（直接指定は空）
+                st_html += f"　<span class='rq'>「{esc(rt['quote'])}」</span>"
+        toc.append(f"<div class='toc-item'><a href='#seg{i}'>{i} {esc(sg.get('title') or '')}</a>"
+                   f"　{dur_jp_of(sg)}{st_html}</div>")
+        # 要約（現在の切り出し内容ベース）→ ハイライト原文 の順に下へ並べる
+        tcand = d["cand_by_title"].get(sg.get("title"))
+        summary = sg.get("summary") or (tcand or {}).get("summary")
+        if summary:
+            toc.append(f"<div class='toc-sum'>{esc(summary)}</div>")
+        for q in sg.get("highlight_quotes") or (tcand or {}).get("highlight_quotes") or []:
+            toc.append(f"<div class='toc-q'>・{esc(q)}</div>")
+    parts.append("<div class='toc'>" + "".join(toc) + "</div>")
+
+    for sg in ordered:
         idx = sg.get("index")
         title = sg.get("title", "")
         cand = d["cand_by_title"].get(title)
@@ -573,7 +694,8 @@ def render_id(idv):
         dur = (e - s) - drop_sec
 
         regions, todo, facts = build_regions(sg, cand, d["fact_checks"], d["exclude_zones"],
-                                             d["cut_speakers"], d["cut_manual"], d["tsegments"])
+                                             d["cut_speakers"], d["cut_manual"], d["tsegments"],
+                                             d["cut_decisions"])
         segfolder = seg_dirname(idv, idx, title)
         silseg = d["sil_by_index"].get(idx)
         # 自然詰めが実際に触るギャップ＝ likely_dropped(取りこぼし) を除き 1.5秒以上
@@ -582,15 +704,26 @@ def render_id(idv):
 
         parts.append(f"<div class='seg' id='seg{idx}'>")
         rank = cand.get("rank") if cand else None
+        # オーナー評価（★5段階＋根拠の発言を併記。分割したら評価はリセットされる）
+        rt = d["ratings_by_index"].get(idx)
+        if rt and rt.get("stars") is not None:
+            st_n = max(0, min(5, int(rt["stars"])))
+            rate_html = (f"<div class='rating'><b>オーナー評価:</b> "
+                         f"<span class='stars'>{'★' * st_n}{'☆' * (5 - st_n)}</span> {st_n}/5")
+            if rt.get("quote"):
+                rate_html += (f"　<span class='rq'>根拠:「{esc(rt['quote'])}」"
+                              f"{('(' + esc(rt.get('date') or '') + ')') if rt.get('date') else ''}</span>")
+            rate_html += "</div>"
+        else:
+            rate_html = "<div class='rating unrated'><b>オーナー評価:</b> ☆☆☆☆☆ 未評価</div>"
+        dm, ds = divmod(int(round(dur)), 60)
+        dh, dm = divmod(dm, 60)
+        dur_jp = (f"{dh}時間{dm}分{ds}秒" if dh else f"{dm}分{ds}秒")
         parts.append(
             "<div class='seghd'>"
-            f"<h2><span class='rank'>確定{idx}</span>　{esc(title)}</h2>"
-            f"<div class='meta'>{fmt_time(s)}〜{fmt_time(e)}　尺 約{fmt_time(dur)}"
-            + (f"　(AI {rank}位)" if rank else "")
-            + f"　｜ カット {len(drops)}区間(計{int(drop_sec)}秒)"
-            + (f"・未決 {len(todo)}" if todo else "")
-            + (f"・事実確認 {len(facts)}" if facts else "")
-            + (f"・詰め候補 {len(gaps)}" if gaps else "") + "</div></div>"
+            f"<h2><span class='rank'>{idx}</span>　{esc(title)}</h2>"
+            + rate_html +
+            f"<div class='meta'>{dur_jp} [{fmt_time(s)}〜{fmt_time(e)}]</div></div>"
         )
 
         if segfolder and os.path.isfile(os.path.join(DATA_DIR, idv, "contents", segfolder, "final.mp4")):
@@ -603,41 +736,65 @@ def render_id(idv):
         else:
             parts.append("<p class='meta'>final.mp4 なし</p>")
 
-        # 無音詰めの3パターン比較（生成済みのバリアントがあれば並べる）
-        variants = [("final_hard.mp4", "ハード（0.8秒→0.15秒／テンポ最速）"),
-                    ("final_natural.mp4", "自然（1.5秒→0.4秒／バランス）"),
-                    ("final_soft.mp4", "ほぼそのまま（3.5秒→0.8秒／最小）")]
-        vparts = []
-        for fn, lb in variants:
-            if segfolder and os.path.isfile(os.path.join(DATA_DIR, idv, "contents", segfolder, fn)):
-                vparts.append(f"<div style='margin:.5rem 0'><div class='meta'>▶ 詰め: {esc(lb)}</div>"
-                              f"<video src='{media_url(idv, segfolder, fn)}' controls preload='metadata'></video></div>")
-        if vparts:
-            parts.append("<div style='background:#8b5cf618;border-left:3px solid #7c3aed;"
-                         "border-radius:8px;padding:.6rem .8rem;margin:.6rem 0'>"
-                         "<h3 style='font-size:.9rem;margin:0 0 .3rem'>🔊 無音詰め 比較（未確定・上の動画が元）</h3>"
-                         + "".join(vparts) + "</div>")
-
-        # 要約・レビュー（象徴的セリフのリストは廃止＝本文ハイライトへ）
-        if cand:
-            inner = ""
-            if cand.get("summary"):
-                inner += f"<p><b>要約:</b> {esc(cand['summary'])}</p>"
-            if cand.get("review"):
-                inner += f"<p><b>レビュー:</b> {esc(cand['review'])}</p>"
-            if inner:
-                parts.append(f"<div class='box summary'>{inner}</div>")
+        # 要約: segments.json の summary（現在の切り出し内容から作り直したもの）を優先。
+        # レビューは表示しない。見出しラベルも付けず本文だけ。
+        summary = sg.get("summary") or (cand or {}).get("summary")
+        if summary:
+            parts.append(f"<div class='box summary'>{esc(summary)}</div>")
 
         # 切り出し全文（すべての注釈を本文中に）
-        quotes = (cand or {}).get("highlight_quotes") or []
+        quotes = sg.get("highlight_quotes") or (cand or {}).get("highlight_quotes") or []
         trim_done = bool(segfolder) and os.path.isfile(
             os.path.join(DATA_DIR, idv, "contents", segfolder, "final_orig.mp4"))
-        tr_html = render_transcript(d["tsegments"], s, e, regions, quotes, gaps, drops, f"vid{idx}", trim_done)
-        parts.append("<div class='transcript'><h3>切り出し全文</h3>"
+        tr_html = render_transcript(d["tsegments"], s, e, regions, quotes, gaps, drops, f"vid{idx}",
+                                    trim_done, seg_no=idx)
+        parts.append("<div class='transcript'>"
                      + (tr_html or "<p class='meta'>文字起こしなし</p>") + "</div>")
         parts.append("</div>")
 
     return page(f"{idv} 生成物", "".join(parts))
+
+
+def apply_decision(idv, cid, action):
+    """カット/残す ボタンの確定処理。cut_decisions.json の status を更新し、
+    cut なら該当セグメントの drops に区間を追加、keep なら（同一区間の drop があれば）外す。
+    動画への反映は render.py の再実行時（チャットで依頼）。"""
+    import datetime
+    if idv not in list_ids() or action not in ("cut", "keep"):
+        return False
+    base = os.path.join(DATA_DIR, idv)
+    dec_path = os.path.join(base, "cut_decisions.json")
+    dec = _load_json(dec_path, {"cuts": []})
+    target = None
+    for c in dec.get("cuts", []):
+        if c.get("cid") == cid:
+            c["status"] = action
+            c["decided"] = datetime.date.today().isoformat()
+            target = c
+            break
+    if target is None:
+        return False
+    seg_path = os.path.join(base, "segments.json")
+    seg = _load_json(seg_path, {})
+    st, en = float(target["start_sec"]), float(target["end_sec"])
+    for sg in seg.get("segments", []):
+        s0, e0 = sg["start_sec"], sg["end_sec"]
+        cs, ce = max(st, s0), min(en, e0)
+        if ce - cs <= 0:
+            continue
+        drops = sg.get("drops") or []
+        if action == "cut":
+            if not any(abs(d0 - cs) < 0.3 and abs(d1 - ce) < 0.3 for d0, d1 in drops):
+                drops.append([cs, ce])
+                sg["drops"] = sorted(drops)
+        else:
+            sg["drops"] = [d for d in drops
+                           if not (abs(d[0] - cs) < 0.3 and abs(d[1] - ce) < 0.3)]
+    with open(dec_path, "w", encoding="utf-8") as f:
+        json.dump(dec, f, ensure_ascii=False, indent=2)
+    with open(seg_path, "w", encoding="utf-8") as f:
+        json.dump(seg, f, ensure_ascii=False, indent=2)
+    return True
 
 
 def safe_media_path(p):
@@ -666,6 +823,16 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_html(page("404", "<h1>404</h1><a href='/'>一覧へ</a>"), 404)
                 else:
                     self._send_html(content)
+            elif route == "/decide":
+                ok = apply_decision((qs.get("id") or [""])[0],
+                                    (qs.get("cid") or [""])[0],
+                                    (qs.get("action") or [""])[0])
+                data = (b"ok" if ok else b"ng")
+                self.send_response(200 if ok else 400)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
             elif route == "/media":
                 full = safe_media_path((qs.get("p") or [""])[0])
                 if full is None:

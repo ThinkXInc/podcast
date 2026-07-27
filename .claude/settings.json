@@ -27,8 +27,6 @@
       "Bash(git branch -D:*)"
     ],
     "ask": [
-      "Write(**)",
-      "Edit(**)",
       "Bash(brew install:*)"
     ],
     "allow": [
@@ -38,6 +36,7 @@
       "Write(./**)",
       "Edit(./**)",
       "Bash",
+
       "Bash(pip install:*)",
       "Bash(pip3 install:*)",
       "Bash(git add:*)",
@@ -46,7 +45,14 @@
       "Bash(git push origin:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+
+      "Bash(python3 scripts/*)",
+      "Bash(python3 ./scripts/*)",
+      "Bash(python3.11 scripts/*)",
+      "Bash(python3.11 ./scripts/*)",
+
+      "Bash(aws --version*)"
     ]
   }
 }
