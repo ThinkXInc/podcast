@@ -11,7 +11,11 @@
 ## 具体ルール
 1. **Python 仮想環境はプロジェクト直下に置く／作ったら必ず requirements.txt を同梱する**
    - `<project>/venv` に作る。`~/venvs/...` には作らない。
-   - 作成: `python3 -m venv <project>/venv && source <project>/venv/bin/activate`
+   - 作成: `python3.11 -m venv <project>/venv && source <project>/venv/bin/activate`
+   - **python3.11 を明示的に指定する。`python3` と書かない。** このマシンの素の `python3` は
+     3.9 で、型構文を使うツールが動かない。venv の中は 3.11 なので、venv を activate せずに
+     `python3 スクリプト.py` と打つと 3.9 で動いてしまい、原因の分かりにくい失敗になる
+     （実際に `python3 web/preview_local.py` が 3.9 で起動した事例がある）。
    - **venv を作った（またはコピー／依存を更新した）ら、必ず `<project>/requirements.txt`
      を書き出す**。venv 実体（1GB超になりがち）ではなく requirements.txt を「正」とし、
      いつでも `python3 -m venv venv && venv/bin/pip install -r requirements.txt` で
@@ -31,9 +35,12 @@
      `config/paths.conf` などに `VENV="$HERE/venv"`、`DATA="$HERE/data"` のように
      ルート相対で書く。絶対パスやホーム直書きをスクリプトに埋めない。
 
-3. **生成物・中間ファイルもプロジェクト内**
+3. **生成物・中間ファイルもプロジェクト内。かつ git 管理しない**
    - データ、キャッシュ、一時ファイル、モデル出力などは `<project>/data` や
      `<project>/.cache` などプロジェクト内に置く。掃除もプロジェクト内で完結させる。
+   - **生成物は `.gitignore` に入れ、git で追跡しない。** 常に再生成できる状態を保ち、
+     再生成に必要なものは「元入力（音源・Notta文字起こし） + scripts + 設定」だけ、という
+     関係を崩さない。追跡してしまうと「どれが最新か」で迷うようになる。
 
 4. **既定値もプロジェクト内を指す**
    - スクリプトの「未設定時のデフォルト」も `$HERE/...` にする。
@@ -41,18 +48,43 @@
 
 5. **環境の健全性チェックを入れる**
    - venv が無ければ「プロジェクト内に作れ」と案内して止める。
-   - アーキ不一致など、黙って落ちると原因が分かりにくいものは、実行前に照合してエラーで止める。
+   - python のバージョン（3.11）とアーキ（arm64）を実行前に照合してエラーで止める。
+     アーキ不一致など、黙って落ちると原因が分かりにくいものは、先に検出して明示的に止める。
+
+6. **外部アプリに依存する工程は「人が実行する」前提で書く**
+   - GUI アプリ（macOS のアプリ、ブラウザ等）を Claude Code から黙って操作しない。
+     操作が必要なら `.claude/settings.json` の `ask` に置き、毎回確認を取る。
+   - **ffmpeg / PyMuPDF はコマンドラインで使ってよい。** このプロジェクトでは
+     ffmpeg が音源の切り出しと書き出し、PyMuPDF が校正用PDFの重ね描きに必須。
+
+## 応答スタイル（全プロジェクト共通・2026-07-27 オーナー指示）
+
+**説明は圧縮しない。** Claude Code の既定の「簡潔さ優先」を過剰適用すると、箇条書きの断片・
+体言止め・矢印記法（A→B→NG）・括弧への詰め込みだらけの報告になり、オーナーは読み返さないと
+理解できない。短さより「一度読めば分かること」を優先する。
+
+- 報告・説明は完結した文章で書く。「何が起きたか → なぜ → 次に何をするか」の順で、
+  各項目に理由と文脈を添える。
+- 箇条書きを使う場合も、各項目は名詞の羅列ではなく説明文にする。
+- ファイル名・判断根拠・数値は省略せず本文中に書き、読み手に前の文脈の参照を強いない。
+- これはチャット出力の規約であり、コミットメッセージやコードを簡潔に保つ規約
+  （`GIT_GENERAL.md`・AXIOMS）とは別。
 
 ## なぜ
 - 作業ディレクトリを消せば環境ごと消える＝後片付けと再現が確実。
 - 別マシンや別パスへ移しても、ルート相対なのでそのまま動く。
 - ホーム共有の壊れた環境を誤って掴む事故が起きない。
 - 複数プロジェクトが互いの環境を汚さない。
+- 生成物を追跡しないことで、元入力が更新されたときに「どれが最新か」で迷わない。
 
 ## このプロジェクトでの適用状況
-- `config/paths.conf`: `VENV="$HERE/venv"`（プロジェクト内）
-- `scripts/transcribe.sh`: 既定 venv = `$HERE/venv`。無ければ作成コマンドを案内。
-  arm64 照合あり。
-- venv: `<project>/venv`（arm64 python3.11 / whisperx・torch2.5.1）。`requirements.txt` に固定版を同梱。
-  再現は `python3.11 -m venv venv && venv/bin/pip install -r requirements.txt`。
-- データ: `config/paths.conf` の `PODCAST_ROOT`（既定 `$HERE/data`）。
+- `config/paths.conf`: `VENV="$HERE/venv"`（プロジェクト内）。データは `PODCAST_ROOT`（既定 `$HERE/data`）。
+- `scripts/transcribe.sh`: 既定 venv = `$HERE/venv`。無ければ作成コマンドを案内。arm64 照合あり。
+  **python バージョンの照合はまだ入っていない（規約5 に対する未対応。要追加）。**
+- venv: `<project>/venv`（arm64 python3.11.15 / mlx-whisper・whisperx・torch2.5.1）。
+  `requirements.txt` に固定版を同梱。再現は
+  `python3.11 -m venv venv && venv/bin/pip install -r requirements.txt`。
+- `web/`（生成物チェック用サイト）は独立コンポーネント。ただし**依存ゼロの標準ライブラリのみで
+  動くため web/venv は作っていない**。`python3 web/preview_local.py` は素の python3=3.9 で
+  起動するので、3.11 前提の書き方を持ち込まないこと。
+- 生成物: `data/` ごと `.gitignore` 済み。`*.mp4` `*.m4a` `*.wav` `*.srt` `*.vtt` も除外。
