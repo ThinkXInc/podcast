@@ -154,26 +154,22 @@ video { width: 100%; max-width: 860px; display: block; border-radius: 6px;
 .editlink { font-size:13px; color:#6b7280; }
 """
 
-# ---------- タイムライン編集ページ (/edit) ----------
-# AE/Premiere 風。要点は「文字もバーも同じ時間軸の座標に置く」こと。
-# x = (単語の開始時刻 - その行の先頭時刻) * pxPerSec で配置するので、
-# 無音のぶんだけ文字と文字のあいだが空き、見た目がそのまま時間になる。
-# バーは残す区間(keeps)で、切った区間はバーが消える。
-EDIT_CSS = """
-.etoolbar { position:sticky; top:0; z-index:8; display:flex; align-items:center; gap:14px;
-            padding:8px 2px; background:#1b1b1b; border-bottom:1px solid #ccc3; font-size:13px; }
-:root[data-theme="light"] .etoolbar { background:#ffffff; }
-.etoolbar button { font-size:13px; padding:2px 12px; cursor:pointer; background:transparent;
-                   color:inherit; border:1px solid #6b728088; border-radius:5px; }
-.etoolbar button:hover { background:#6b728033; }
-.etime { font-variant-numeric:tabular-nums; font-size:14px; min-width:78px; }
-.ekeep { color:#9ca3af; font-variant-numeric:tabular-nums; }
-.estatus { color:#9ca3af; margin-left:auto; }
-.ezoom { color:#9ca3af; font-size:12px; }
-.ehelp { color:#6b7280; font-size:12px; margin:6px 0 16px; line-height:1.9; }
+# ---------- タイムライン（文字起こしの場所に埋め込む・別ページは作らない） ----------
+TIMELINE_CSS = """
+/* 文字起こしの場所がそのままタイムラインになる。別ページは作らない。
+   要点は「文字もバーも同じ時間軸の座標に置く」こと。
+   x = (時刻 - 行頭時刻) * pxPerSec なので、無音のぶんだけ文字と文字のあいだが空き、
+   見た目がそのまま時間になる。 */
+.tlbar { display:flex; align-items:center; gap:12px; font-size:12px; color:#9ca3af;
+         margin:10px 0 6px; }
+.tlbar button { font-size:12px; padding:1px 10px; cursor:pointer; background:transparent;
+                color:inherit; border:1px solid #6b728088; border-radius:5px; }
+.tlbar button:hover { background:#6b728033; }
+.tltime { font-variant-numeric:tabular-nums; min-width:70px; color:#e8e8e8; font-size:13px; }
+:root[data-theme="light"] .tltime { color:#111; }
+.tlstat { margin-left:auto; }
+.tlhelp { font-size:11px; color:#6b7280; line-height:1.8; margin:0 0 8px; }
 
-/* 1行＝一定の時間幅。文字もバーも x = (t - 行頭時刻) * pxPerSec に置く。
-   だから無音のぶんだけ文字と文字のあいだが空き、見た目がそのまま時間になる。 */
 .row { position:relative; margin:0 0 4px; }
 .rowtime { position:absolute; left:0; top:0; font-size:10px; color:#6b7280;
            font-variant-numeric:tabular-nums; }
@@ -184,9 +180,18 @@ EDIT_CSS = """
 :root[data-theme="light"] .w.cut { color:#c9c9c9; }
 .w.playing { background:#2563eb33; }
 .strip { position:absolute; left:0; right:0; top:24px; height:18px; cursor:crosshair; }
-.bar { position:absolute; top:3px; height:9px; background:#7d8b9f; border-radius:2px; }
-:root[data-theme="light"] .bar { background:#9aa6b6; }
-.bar.sel { background:#2563eb; }
+/* バーは「残す区間」。カットしない限り分割せず、セグメント全体で1本のまま。
+   バーの中を VAD で塗り分ける: 緑＝発話 / 黄＝無音。
+   緑・黄・緑 と並んでいたら、黄だけ切れば無音が落とせる、という読み方をする。 */
+.bar { position:absolute; top:3px; height:9px; border-radius:2px; overflow:hidden;
+       background:#3f8f5f; }
+.bar .sil { position:absolute; top:0; bottom:0; background:#d8b230; }
+:root[data-theme="light"] .bar { background:#4da36f; }
+:root[data-theme="light"] .bar .sil { background:#e8c552; }
+.bar.sel { box-shadow:0 0 0 2px #2563eb, 0 0 0 3px #2563eb55; }
+/* VAD がまだ無い ID では塗り分けできないのでグレー1色にする */
+.bar.novad { background:#7d8b9f; }
+:root[data-theme="light"] .bar.novad { background:#9aa6b6; }
 .gapline { position:absolute; top:7px; height:1px; background:#4b5563; }
 :root[data-theme="light"] .gapline { background:#d4d4d4; }
 .hoverline { position:absolute; top:-24px; bottom:-2px; width:1px; background:#9ca3af;
@@ -195,379 +200,398 @@ EDIT_CSS = """
             display:none; pointer-events:none; z-index:3; }
 .tlabel { position:absolute; top:-38px; font-size:10px; color:#9ca3af; display:none;
           pointer-events:none; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.tlwait { color:#6b7280; font-size:12px; padding:12px 0; }
 """
 
-EDIT_JS = r"""
+TIMELINE_JS = r"""
+/* 1ページに複数のタイムラインが載る（セグメントごと）。重いので、画面に入ってから組む。
+   再生は元音源の <audio id="orig"> を共有し、同時に鳴るのは1つだけにする。 */
 (function(){
-var D=JSON.parse(document.getElementById('edit-data').textContent);
 var EPS=0.01, MINW=0.02;
-var audio=document.getElementById('aud');
-var wrap=document.getElementById('rows');
-var keeps=complement(D.drops||[]);
-var undoStack=[], redoStack=[];
-var playhead=D.segStart, selKi=-1, playing=false;
-/* 既定140px/秒。実測で1行あたり平均31語≒62字なので、100px/秒だと1字13pxしか取れず
-   14pxの文字が重なる。140なら1字18px前後になり、押し出し補正がほぼ働かない。 */
-var pxPerSec=parseFloat(localStorage.getItem('edit_pps'))||140;
-var rows=[], dragging=null, pendingDrag=null, saveTimer=null, laneW=0;
+var audio=document.getElementById('orig');
+var active=null;                      /* いま再生中のタイムライン */
+var pxPerSec=parseFloat(localStorage.getItem('tl_pps'))||140;
+var insts=[];
 
-function complement(drops){
-  var ks=[], t=D.segStart;
-  (drops||[]).map(function(d){return [Math.max(D.segStart,+d[0]),Math.min(D.segEnd,+d[1])];})
-    .filter(function(d){return d[1]-d[0]>EPS;})
-    .sort(function(a,b){return a[0]-b[0];})
-    .forEach(function(d){ if(d[0]-t>EPS) ks.push([t,d[0]]); t=Math.max(t,d[1]); });
-  if(D.segEnd-t>EPS) ks.push([t,D.segEnd]);
-  return ks;
-}
-function currentDrops(){
-  var out=[], t=D.segStart;
-  keeps.slice().sort(function(a,b){return a[0]-b[0];}).forEach(function(k){
-    if(k[0]-t>EPS) out.push([+t.toFixed(3),+k[0].toFixed(3)]);
-    t=Math.max(t,k[1]);
-  });
-  if(D.segEnd-t>EPS) out.push([+t.toFixed(3),+D.segEnd.toFixed(3)]);
-  return out;
-}
-function fmt(t){
-  t=Math.max(0,t-D.segStart);
-  var m=Math.floor(t/60), s=t-m*60;
-  return m+':'+(s<10?'0':'')+s.toFixed(2);
-}
 function fmtAbs(t){
   var h=Math.floor(t/3600), m=Math.floor((t%3600)/60), s=Math.floor(t%60);
-  return (h?h+':':'')+(m<10&&h?'0':'')+m+':'+(s<10?'0':'')+s;
+  return (h?h+':':'')+((m<10&&h)?'0':'')+m+':'+(s<10?'0':'')+s;
 }
 
-/* ---- 時間比例レイアウト。1行の時間幅 = laneW / pxPerSec ---- */
-function build(){
-  wrap.innerHTML='';
-  rows=[];
-  var probe=document.createElement('div');
-  probe.className='lane'; wrap.appendChild(probe);
-  laneW=probe.clientWidth||800; wrap.removeChild(probe);
-  var rowSec=laneW/pxPerSec;
-  var nRows=Math.ceil((D.segEnd-D.segStart)/rowSec);
-  document.getElementById('ezoom').textContent=
-    pxPerSec.toFixed(0)+'px/秒 ・ 1行'+rowSec.toFixed(1)+'秒 ・ '+nRows+'行';
+function makeTimeline(root){
+  var D=JSON.parse(root.querySelector('script[type="application/json"]').textContent);
+  var keeps=complement(D.drops||[]);
+  var undoStack=[], redoStack=[], playhead=D.segStart, selKi=-1;
+  var rows=[], laneW=0, built=false, saveTimer=null;
+  var host=root.querySelector('.tlrows');
+  var elTime=root.querySelector('.tltime'), elKeep=root.querySelector('.tlkeep');
+  var elStat=root.querySelector('.tlstat'), elZoom=root.querySelector('.tlzoom');
+  var elBtn=root.querySelector('.tlplay');
 
-  var wi=0;
-  for(var r=0;r<nRows;r++){
-    var t0=D.segStart+r*rowSec, t1=Math.min(D.segEnd,t0+rowSec);
-    var row=document.createElement('div'); row.className='row';
-    var lab=document.createElement('div'); lab.className='rowtime';
-    lab.textContent=fmtAbs(t0); row.appendChild(lab);
-    var lane=document.createElement('div'); lane.className='lane'; row.appendChild(lane);
-    var strip=document.createElement('div'); strip.className='strip'; lane.appendChild(strip);
-
-    /* 単語を時間位置に置く。重なるときだけ右へ最小限ずらす */
-    var lastRight=-1e9, els=[];
-    while(wi<D.words.length && D.words[wi].s < t1){
-      var w=D.words[wi];
-      if(w.e<=t0){ wi++; continue; }
-      var x=(w.s-t0)*pxPerSec;
-      if(x<lastRight) x=lastRight;
-      var el=document.createElement('span');
-      el.className='w'; el.textContent=w.t;
-      el.style.left=x+'px';
-      el.dataset.s=w.s; el.dataset.e=w.e;
-      lane.appendChild(el);
-      els.push(el);
-      lastRight=x+el.offsetWidth;
-      wi++;
-    }
-    wrap.appendChild(row);
-    var R={t0:t0,t1:t1,lane:lane,strip:strip,els:els,bars:[]};
-    rows.push(R);
-    bindStrip(R);
+  function complement(drops){
+    var ks=[], t=D.segStart;
+    (drops||[]).map(function(d){return [Math.max(D.segStart,+d[0]),Math.min(D.segEnd,+d[1])];})
+      .filter(function(d){return d[1]-d[0]>EPS;})
+      .sort(function(a,b){return a[0]-b[0];})
+      .forEach(function(d){ if(d[0]-t>EPS) ks.push([t,d[0]]); t=Math.max(t,d[1]); });
+    if(D.segEnd-t>EPS) ks.push([t,D.segEnd]);
+    return ks;
   }
-  renderBars(); styleWords(); movePlayhead();
-}
-function X(R,t){ return (t-R.t0)*pxPerSec; }
-function T(R,x){ return R.t0 + x/pxPerSec; }
-
-function renderBars(){
-  rows.forEach(function(R){
-    R.strip.innerHTML=''; R.bars=[];
-    var g=document.createElement('div'); g.className='gapline';
-    g.style.left='0px'; g.style.width=X(R,R.t1)+'px'; R.strip.appendChild(g);
-    keeps.forEach(function(k,ki){
-      if(k[1]<=R.t0||k[0]>=R.t1) return;
-      var a=Math.max(k[0],R.t0), b=Math.min(k[1],R.t1);
-      var x0=X(R,a), x1=X(R,b);
-      var bar=document.createElement('div');
-      bar.className='bar'+(ki===selKi?' sel':'');
-      bar.style.left=x0+'px'; bar.style.width=Math.max(1,x1-x0)+'px';
-      R.strip.appendChild(bar);
-      R.bars.push({ki:ki,x0:x0,x1:x1,edgeS:(k[0]>=R.t0-1e-9),edgeE:(k[1]<=R.t1+1e-9)});
+  function currentDrops(){
+    var out=[], t=D.segStart;
+    keeps.slice().sort(function(a,b){return a[0]-b[0];}).forEach(function(k){
+      if(k[0]-t>EPS) out.push([+t.toFixed(3),+k[0].toFixed(3)]);
+      t=Math.max(t,k[1]);
     });
-    R.hover=document.createElement('div'); R.hover.className='hoverline'; R.strip.appendChild(R.hover);
-    R.play=document.createElement('div'); R.play.className='playline'; R.strip.appendChild(R.play);
-    R.tlab=document.createElement('div'); R.tlab.className='tlabel'; R.strip.appendChild(R.tlab);
-  });
-}
-function inKeep(t){ return keeps.some(function(k){return k[0]<=t&&t<k[1];}); }
-function styleWords(){
-  rows.forEach(function(R){
-    R.els.forEach(function(el){
-      var mid=(+el.dataset.s + +el.dataset.e)/2;
-      el.classList.toggle('cut', !inKeep(mid));
-    });
-  });
-  var kept=keeps.reduce(function(a,k){return a+(k[1]-k[0]);},0);
-  var m=Math.floor(kept/60), s=Math.round(kept-m*60);
-  document.getElementById('ekeep').textContent='残り尺 '+m+'分'+(s<10?'0':'')+s+'秒';
-}
-function movePlayhead(){
-  rows.forEach(function(R){ R.play.style.display='none'; });
-  var R=rows.find(function(R){return R.t0<=playhead&&playhead<R.t1;})||rows[rows.length-1];
-  if(R){ R.play.style.left=X(R,playhead)+'px'; R.play.style.display='block'; }
-  document.getElementById('etime').textContent=fmt(playhead);
-}
-function highlight(t){
-  document.querySelectorAll('.w.playing').forEach(function(x){x.classList.remove('playing');});
-  var R=rows.find(function(R){return R.t0<=t&&t<R.t1;});
-  if(!R) return;
-  var best=null;
-  R.els.forEach(function(el){ if(+el.dataset.s<=t+0.01&&(!best||+el.dataset.s>+best.dataset.s)) best=el; });
-  if(best&&t-(+best.dataset.s)<10) best.classList.add('playing');
-}
-
-/* ---- 編集 ---- */
-function pushUndo(){ undoStack.push(JSON.stringify(keeps)); if(undoStack.length>200)undoStack.shift(); redoStack=[]; }
-function afterEdit(){ renderBars(); styleWords(); movePlayhead(); scheduleSave(); }
-function undo(){ if(!undoStack.length)return; redoStack.push(JSON.stringify(keeps));
-  keeps=JSON.parse(undoStack.pop()); selKi=-1; afterEdit(); }
-function redo(){ if(!redoStack.length)return; undoStack.push(JSON.stringify(keeps));
-  keeps=JSON.parse(redoStack.pop()); selKi=-1; afterEdit(); }
-function splitAt(t){
-  var ki=keeps.findIndex(function(k){return t>k[0]+MINW&&t<k[1]-MINW;});
-  if(ki<0) return;
-  pushUndo();
-  var k=keeps[ki];
-  keeps.splice(ki,1,[k[0],t],[t,k[1]]);
-  selKi=-1; afterEdit();
-}
-function setStatus(s){ document.getElementById('estatus').textContent=s; }
-function scheduleSave(){ setStatus('未保存'); clearTimeout(saveTimer); saveTimer=setTimeout(doSave,700); }
-function doSave(){
-  setStatus('保存中…');
-  fetch('/edit_save',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({id:D.id,index:D.index,drops:currentDrops()})})
-  .then(function(r){ setStatus(r.ok?'保存済み（動画は render 再実行で反映）':'保存失敗'); })
-  .catch(function(){ setStatus('保存失敗'); });
-}
-
-/* ---- 再生（カット区間はスキップ） ---- */
-function tick(){
-  if(!playing) return;
-  var t=audio.currentTime;
-  if(t>=D.segEnd){ stopPlay(); return; }
-  if(!inKeep(t)){
-    var nk=keeps.find(function(k){return k[0]>t;});
-    if(!nk){ stopPlay(); return; }
-    audio.currentTime=nk[0]+0.001;
+    if(D.segEnd-t>EPS) out.push([+t.toFixed(3),+D.segEnd.toFixed(3)]);
+    return out;
   }
-  playhead=audio.currentTime;
-  movePlayhead(); highlight(playhead);
-  requestAnimationFrame(tick);
-}
-function startPlay(){
-  if(playing||!audio) return;
-  if(!inKeep(playhead)){
-    var nk=keeps.find(function(k){return k[0]>=playhead;});
-    playhead=nk?nk[0]:(keeps[0]?keeps[0][0]:D.segStart);
+  function fmt(t){
+    t=Math.max(0,t-D.segStart);
+    var m=Math.floor(t/60), s=t-m*60;
+    return m+':'+(s<10?'0':'')+s.toFixed(2);
   }
-  audio.currentTime=playhead;
-  audio.play().then(function(){ playing=true;
-    document.getElementById('ebtn').textContent='∎ 停止'; requestAnimationFrame(tick);
-  }).catch(function(){ setStatus('再生できません（音源なし）'); });
-}
-function stopPlay(){
-  if(audio) audio.pause();
-  playing=false;
-  document.getElementById('ebtn').textContent='▶ 再生';
-  document.querySelectorAll('.w.playing').forEach(function(x){x.classList.remove('playing');});
-}
-document.getElementById('ebtn').onclick=function(){ playing?stopPlay():startPlay(); };
+  function X(R,t){ return (t-R.t0)*pxPerSec; }
+  function T(R,x){ return R.t0 + x/pxPerSec; }
+  function inKeep(t){ return keeps.some(function(k){return k[0]<=t&&t<k[1];}); }
 
-/* ---- ストリップ操作 ---- */
-function edgesAt(R,x){
-  var out=[];
-  R.bars.forEach(function(b){
-    if(b.edgeS&&Math.abs(x-b.x0)<6) out.push({ki:b.ki,which:0});
-    if(b.edgeE&&Math.abs(x-b.x1)<6) out.push({ki:b.ki,which:1});
-  });
-  return out;
-}
-function bindStrip(R){
-  R.strip.addEventListener('mousemove',function(ev){
-    if(dragging||pendingDrag) return;
-    var x=ev.clientX-R.strip.getBoundingClientRect().left;
-    R.hover.style.left=x+'px'; R.hover.style.display='block';
-    R.tlab.style.left=(x+4)+'px'; R.tlab.style.display='block';
-    R.tlab.textContent=fmt(T(R,x));
-    R.strip.style.cursor=edgesAt(R,x).length?'ew-resize':'crosshair';
-  });
-  R.strip.addEventListener('mouseleave',function(){
-    R.hover.style.display='none'; R.tlab.style.display='none';
-  });
-  R.strip.addEventListener('mousedown',function(ev){
-    ev.preventDefault();
-    var x=ev.clientX-R.strip.getBoundingClientRect().left;
-    var cand=edgesAt(R,x);
-    if(cand.length===1){ pushUndo(); dragging={R:R,ki:cand[0].ki,which:cand[0].which}; }
-    else if(cand.length>1){ pendingDrag={R:R,cand:cand,x0:ev.clientX}; }
-    else{
-      playhead=T(R,x);
-      var hit=R.bars.find(function(b){return x>=b.x0&&x<=b.x1;});
-      selKi=hit?hit.ki:-1;
-      renderBars(); movePlayhead();
-      if(playing) audio.currentTime=playhead;
+  function build(){
+    host.innerHTML=''; rows=[];
+    var probe=document.createElement('div'); probe.className='lane';
+    host.appendChild(probe); laneW=probe.clientWidth||800; host.removeChild(probe);
+    var rowSec=laneW/pxPerSec;
+    var nRows=Math.ceil((D.segEnd-D.segStart)/rowSec);
+    if(elZoom) elZoom.textContent=pxPerSec.toFixed(0)+'px/秒・1行'+rowSec.toFixed(1)+'秒';
+    var wi=0;
+    for(var r=0;r<nRows;r++){
+      var t0=D.segStart+r*rowSec, t1=Math.min(D.segEnd,t0+rowSec);
+      var row=document.createElement('div'); row.className='row';
+      var lab=document.createElement('div'); lab.className='rowtime';
+      lab.textContent=fmtAbs(t0); row.appendChild(lab);
+      var lane=document.createElement('div'); lane.className='lane'; row.appendChild(lane);
+      var strip=document.createElement('div'); strip.className='strip'; lane.appendChild(strip);
+      var lastRight=-1e9, els=[];
+      while(wi<D.words.length && D.words[wi].s < t1){
+        var w=D.words[wi];
+        if(w.e<=t0){ wi++; continue; }
+        var x=(w.s-t0)*pxPerSec;
+        if(x<lastRight) x=lastRight;
+        var el=document.createElement('span');
+        el.className='w'; el.textContent=w.t; el.style.left=x+'px';
+        el.dataset.s=w.s; el.dataset.e=w.e;
+        lane.appendChild(el); els.push(el);
+        lastRight=x+el.offsetWidth; wi++;
+      }
+      host.appendChild(row);
+      var R={t0:t0,t1:t1,strip:strip,els:els,bars:[]};
+      rows.push(R); bindStrip(R);
     }
-  });
-}
-document.addEventListener('mousemove',function(ev){
-  if(pendingDrag){
-    var dx=ev.clientX-pendingDrag.x0;
-    if(Math.abs(dx)>=3){
-      var pick=null;
-      pendingDrag.cand.forEach(function(c){
-        if(dx>0&&c.which===0) pick=c;
-        if(dx<0&&c.which===1&&!pick) pick=c;
+    built=true;
+    renderBars(); styleWords(); movePlayhead();
+  }
+  function renderBars(){
+    rows.forEach(function(R){
+      R.strip.innerHTML=''; R.bars=[];
+      var g=document.createElement('div'); g.className='gapline';
+      g.style.left='0px'; g.style.width=X(R,R.t1)+'px'; R.strip.appendChild(g);
+      keeps.forEach(function(k,ki){
+        if(k[1]<=R.t0||k[0]>=R.t1) return;
+        var a=Math.max(k[0],R.t0), b=Math.min(k[1],R.t1);
+        var x0=X(R,a), x1=X(R,b);
+        var bar=document.createElement('div');
+        bar.className='bar'+(ki===selKi?' sel':'')+(D.silence.length?'':' novad');
+        bar.style.left=x0+'px'; bar.style.width=Math.max(1,x1-x0)+'px';
+        D.silence.forEach(function(sv){
+          var sa=Math.max(sv[0],a), sb=Math.min(sv[1],b);
+          if(sb-sa<=0) return;
+          var dd=document.createElement('div'); dd.className='sil';
+          dd.style.left=(X(R,sa)-x0)+'px';
+          dd.style.width=Math.max(1,X(R,sb)-X(R,sa))+'px';
+          bar.appendChild(dd);
+        });
+        R.strip.appendChild(bar);
+        R.bars.push({ki:ki,x0:x0,x1:x1,edgeS:(k[0]>=R.t0-1e-9),edgeE:(k[1]<=R.t1+1e-9)});
       });
-      pushUndo();
-      dragging={R:pendingDrag.R,ki:(pick||pendingDrag.cand[0]).ki,
-                which:(pick||pendingDrag.cand[0]).which};
-      pendingDrag=null;
+      R.hover=document.createElement('div'); R.hover.className='hoverline'; R.strip.appendChild(R.hover);
+      R.play=document.createElement('div'); R.play.className='playline'; R.strip.appendChild(R.play);
+      R.tlab=document.createElement('div'); R.tlab.className='tlabel'; R.strip.appendChild(R.tlab);
+    });
+  }
+  function styleWords(){
+    rows.forEach(function(R){
+      R.els.forEach(function(el){
+        var mid=(+el.dataset.s + +el.dataset.e)/2;
+        el.classList.toggle('cut', !inKeep(mid));
+      });
+    });
+    var kept=keeps.reduce(function(a,k){return a+(k[1]-k[0]);},0);
+    var m=Math.floor(kept/60), s=Math.round(kept-m*60);
+    if(elKeep) elKeep.textContent='残り尺 '+m+'分'+(s<10?'0':'')+s+'秒';
+  }
+  function movePlayhead(){
+    rows.forEach(function(R){ if(R.play) R.play.style.display='none'; });
+    var R=rows.find(function(R){return R.t0<=playhead&&playhead<R.t1;})||rows[rows.length-1];
+    if(R&&R.play){ R.play.style.left=X(R,playhead)+'px'; R.play.style.display='block'; }
+    if(elTime) elTime.textContent=fmt(playhead);
+  }
+  function highlight(t){
+    root.querySelectorAll('.w.playing').forEach(function(x){x.classList.remove('playing');});
+    var R=rows.find(function(R){return R.t0<=t&&t<R.t1;});
+    if(!R) return;
+    var best=null;
+    R.els.forEach(function(el){ if(+el.dataset.s<=t+0.01&&(!best||+el.dataset.s>+best.dataset.s)) best=el; });
+    if(best&&t-(+best.dataset.s)<10) best.classList.add('playing');
+  }
+
+  function pushUndo(){ undoStack.push(JSON.stringify(keeps)); if(undoStack.length>200)undoStack.shift(); redoStack=[]; }
+  function afterEdit(){ renderBars(); styleWords(); movePlayhead(); scheduleSave(); }
+  function setStatus(s){ if(elStat) elStat.textContent=s; }
+  function scheduleSave(){ setStatus('未保存'); clearTimeout(saveTimer); saveTimer=setTimeout(doSave,700); }
+  function doSave(){
+    setStatus('保存中…');
+    fetch('/edit_save',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:D.id,index:D.index,drops:currentDrops()})})
+    .then(function(r){ setStatus(r.ok?'保存済み':'保存失敗'); })
+    .catch(function(){ setStatus('保存失敗'); });
+  }
+  function splitAt(t){
+    var ki=keeps.findIndex(function(k){return t>k[0]+MINW&&t<k[1]-MINW;});
+    if(ki<0) return;
+    pushUndo(); var k=keeps[ki];
+    keeps.splice(ki,1,[k[0],t],[t,k[1]]); selKi=-1; afterEdit();
+  }
+  function dropRange(a,b){
+    var ki=keeps.findIndex(function(k){return k[0]<b-EPS&&a<k[1]-EPS;});
+    if(ki<0) return false;
+    var k=keeps[ki], parts=[];
+    if(a-k[0]>MINW) parts.push([k[0],Math.max(a,k[0])]);
+    if(k[1]-b>MINW) parts.push([Math.min(b,k[1]),k[1]]);
+    keeps.splice.apply(keeps,[ki,1].concat(parts));
+    return true;
+  }
+  function dropAllSilence(minSec){
+    var t=D.silence.filter(function(sv){
+      return sv[1]-sv[0]>=minSec && keeps.some(function(k){return k[0]<sv[1]-EPS&&sv[0]<k[1]-EPS;});
+    });
+    if(!t.length){ setStatus(minSec+'秒以上の無音はありません'); return; }
+    pushUndo();
+    t.slice().reverse().forEach(function(sv){ dropRange(sv[0],sv[1]); });
+    keeps.sort(function(a,b){return a[0]-b[0];});
+    selKi=-1; afterEdit(); setStatus(t.length+'箇所の無音を落としました');
+  }
+
+  /* ---- 再生。元音源を共有するので、鳴らす前に他を止める ---- */
+  function tick(){
+    if(active!==api) return;
+    var t=audio.currentTime;
+    if(t>=D.segEnd){ stop(); return; }
+    if(!inKeep(t)){
+      var nk=keeps.find(function(k){return k[0]>t;});
+      if(!nk){ stop(); return; }
+      audio.currentTime=nk[0]+0.001;
     }
-    return;
+    playhead=audio.currentTime; movePlayhead(); highlight(playhead);
+    requestAnimationFrame(tick);
   }
-  if(!dragging) return;
-  var R=dragging.R;
-  var t=T(R, ev.clientX-R.strip.getBoundingClientRect().left);
-  var k=keeps[dragging.ki];
-  if(dragging.which===0){
-    var lo=dragging.ki>0?keeps[dragging.ki-1][1]:D.segStart;
-    k[0]=Math.min(Math.max(t,lo),k[1]-MINW);
-  }else{
-    var hi=dragging.ki<keeps.length-1?keeps[dragging.ki+1][0]:D.segEnd;
-    k[1]=Math.max(Math.min(t,hi),k[0]+MINW);
+  function play(){
+    if(!audio){ setStatus('元音源がありません'); return; }
+    if(active&&active!==api) active.stop();
+    if(!inKeep(playhead)){
+      var nk=keeps.find(function(k){return k[0]>=playhead;});
+      playhead=nk?nk[0]:(keeps[0]?keeps[0][0]:D.segStart);
+    }
+    audio.currentTime=playhead;
+    audio.play().then(function(){ active=api; if(elBtn) elBtn.textContent='∎ 停止';
+      requestAnimationFrame(tick); }).catch(function(){ setStatus('再生できません'); });
   }
-  renderBars(); styleWords(); movePlayhead();
-});
-document.addEventListener('mouseup',function(){
-  if(pendingDrag) pendingDrag=null;
-  if(dragging){ dragging=null; scheduleSave(); }
-});
+  function stop(){
+    if(audio) audio.pause();
+    if(active===api) active=null;
+    if(elBtn) elBtn.textContent='▶ 再生';
+    root.querySelectorAll('.w.playing').forEach(function(x){x.classList.remove('playing');});
+  }
 
-/* ---- 単語クリックで頭出し ---- */
-wrap.addEventListener('click',function(ev){
-  var el=ev.target.closest('.w'); if(!el) return;
-  playhead=+el.dataset.s; movePlayhead();
-  if(playing) audio.currentTime=playhead;
-});
+  function edgesAt(R,x){
+    var out=[];
+    R.bars.forEach(function(b){
+      if(b.edgeS&&Math.abs(x-b.x0)<6) out.push({ki:b.ki,which:0});
+      if(b.edgeE&&Math.abs(x-b.x1)<6) out.push({ki:b.ki,which:1});
+    });
+    return out;
+  }
+  var dragging=null, pendingDrag=null;
+  function bindStrip(R){
+    R.strip.addEventListener('mousemove',function(ev){
+      if(dragging||pendingDrag) return;
+      var x=ev.clientX-R.strip.getBoundingClientRect().left;
+      R.hover.style.left=x+'px'; R.hover.style.display='block';
+      R.tlab.style.left=(x+4)+'px'; R.tlab.style.display='block';
+      R.tlab.textContent=fmt(T(R,x));
+      R.strip.style.cursor=edgesAt(R,x).length?'ew-resize':'crosshair';
+    });
+    R.strip.addEventListener('mouseleave',function(){
+      R.hover.style.display='none'; R.tlab.style.display='none';
+    });
+    R.strip.addEventListener('dblclick',function(ev){
+      /* 黄（無音）をダブルクリック＝その無音だけ落とす */
+      var x=ev.clientX-R.strip.getBoundingClientRect().left, t=T(R,x);
+      var sv=D.silence.find(function(v){return v[0]<=t&&t<v[1];});
+      if(sv&&R.bars.some(function(b){return x>=b.x0&&x<=b.x1;})){
+        ev.preventDefault(); pushUndo(); dropRange(sv[0],sv[1]); selKi=-1; afterEdit();
+      }
+    });
+    R.strip.addEventListener('mousedown',function(ev){
+      ev.preventDefault();
+      selectInst(api);
+      var x=ev.clientX-R.strip.getBoundingClientRect().left;
+      var cand=edgesAt(R,x);
+      if(cand.length===1){ pushUndo(); dragging={R:R,ki:cand[0].ki,which:cand[0].which}; }
+      else if(cand.length>1){ pendingDrag={R:R,cand:cand,x0:ev.clientX}; }
+      else{
+        playhead=T(R,x);
+        var hit=R.bars.find(function(b){return x>=b.x0&&x<=b.x1;});
+        selKi=hit?hit.ki:-1;
+        renderBars(); movePlayhead();
+        if(active===api) audio.currentTime=playhead;
+      }
+    });
+  }
+  document.addEventListener('mousemove',function(ev){
+    if(pendingDrag){
+      var dx=ev.clientX-pendingDrag.x0;
+      if(Math.abs(dx)>=3){
+        var pick=null;
+        pendingDrag.cand.forEach(function(c){
+          if(dx>0&&c.which===0) pick=c;
+          if(dx<0&&c.which===1&&!pick) pick=c;
+        });
+        pick=pick||pendingDrag.cand[0];
+        pushUndo(); dragging={R:pendingDrag.R,ki:pick.ki,which:pick.which}; pendingDrag=null;
+      }
+      return;
+    }
+    if(!dragging) return;
+    var R=dragging.R;
+    var t=T(R, ev.clientX-R.strip.getBoundingClientRect().left);
+    var k=keeps[dragging.ki];
+    if(dragging.which===0){
+      var lo=dragging.ki>0?keeps[dragging.ki-1][1]:D.segStart;
+      k[0]=Math.min(Math.max(t,lo),k[1]-MINW);
+    }else{
+      var hi=dragging.ki<keeps.length-1?keeps[dragging.ki+1][0]:D.segEnd;
+      k[1]=Math.max(Math.min(t,hi),k[0]+MINW);
+    }
+    renderBars(); styleWords(); movePlayhead();
+  });
+  document.addEventListener('mouseup',function(){
+    if(pendingDrag) pendingDrag=null;
+    if(dragging){ dragging=null; scheduleSave(); }
+  });
+  host.addEventListener('click',function(ev){
+    var el=ev.target.closest('.w'); if(!el) return;
+    selectInst(api);
+    playhead=+el.dataset.s; movePlayhead();
+    if(active===api) audio.currentTime=playhead;
+  });
 
-/* ---- ズーム ---- */
-function setZoom(v){
-  pxPerSec=Math.max(20,Math.min(600,v));
-  localStorage.setItem('edit_pps',pxPerSec);
-  build();
+  if(elBtn) elBtn.onclick=function(){ selectInst(api); (active===api)?stop():play(); };
+  var zi=root.querySelector('.tlzin'), zo=root.querySelector('.tlzout');
+  if(zi) zi.onclick=function(){ setZoomAll(pxPerSec*1.4); };
+  if(zo) zo.onclick=function(){ setZoomAll(pxPerSec/1.4); };
+  var ds=root.querySelector('.tldropsil');
+  if(ds) ds.onclick=function(){ selectInst(api); dropAllSilence(1.0); };
+
+  var api={ root:root, build:build, isBuilt:function(){return built;}, rebuild:function(){ if(built) build(); },
+            play:play, stop:stop, splitAt:function(){ splitAt(playhead); },
+            undo:function(){ if(!undoStack.length)return; redoStack.push(JSON.stringify(keeps));
+              keeps=JSON.parse(undoStack.pop()); selKi=-1; afterEdit(); },
+            redo:function(){ if(!redoStack.length)return; undoStack.push(JSON.stringify(keeps));
+              keeps=JSON.parse(redoStack.pop()); selKi=-1; afterEdit(); },
+            delSel:function(){ if(selKi<0) return; pushUndo(); keeps.splice(selKi,1); selKi=-1; afterEdit(); },
+            dropSil:function(){ dropAllSilence(1.0); } };
+  return api;
 }
-document.getElementById('ezin').onclick=function(){ setZoom(pxPerSec*1.4); };
-document.getElementById('ezout').onclick=function(){ setZoom(pxPerSec/1.4); };
 
-/* ---- キーボード ---- */
+var focused=null;
+function selectInst(a){ focused=a; }
+function setZoomAll(v){
+  pxPerSec=Math.max(20,Math.min(600,v));
+  localStorage.setItem('tl_pps',pxPerSec);
+  insts.forEach(function(a){ a.rebuild(); });
+}
+
 document.addEventListener('keydown',function(e){
   if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA') return;
-  if(e.code==='Space'){ e.preventDefault(); playing?stopPlay():startPlay(); }
-  else if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='d'){ e.preventDefault(); splitAt(playhead); }
-  else if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='z'){ e.preventDefault(); e.shiftKey?redo():undo(); }
-  else if((e.metaKey||e.ctrlKey)&&(e.key==='='||e.key==='+')){ e.preventDefault(); setZoom(pxPerSec*1.4); }
-  else if((e.metaKey||e.ctrlKey)&&e.key==='-'){ e.preventDefault(); setZoom(pxPerSec/1.4); }
-  else if((e.key==='Delete'||e.key==='Backspace')&&selKi>=0){
-    e.preventDefault(); pushUndo(); keeps.splice(selKi,1); selKi=-1; afterEdit();
-  }
+  var a=focused||active; if(!a) return;
+  if(e.code==='Space'){ e.preventDefault(); (active===a)?a.stop():a.play(); }
+  else if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='d'){ e.preventDefault(); a.splitAt(); }
+  else if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='z'){ e.preventDefault(); e.shiftKey?a.redo():a.undo(); }
+  else if((e.metaKey||e.ctrlKey)&&(e.key==='='||e.key==='+')){ e.preventDefault(); setZoomAll(pxPerSec*1.4); }
+  else if((e.metaKey||e.ctrlKey)&&e.key==='-'){ e.preventDefault(); setZoomAll(pxPerSec/1.4); }
+  else if(e.key==='Delete'||e.key==='Backspace'){ e.preventDefault(); a.delSel(); }
+});
+
+/* 画面に入ってから組む。7セグメントぶんの単語を最初に全部DOM化すると重いため */
+document.querySelectorAll('.tl').forEach(function(root){
+  var a=makeTimeline(root);
+  insts.push(a);
+  var io=new IntersectionObserver(function(es){
+    es.forEach(function(en){
+      if(en.isIntersecting&&!a.isBuilt()){ a.build(); io.disconnect(); }
+    });
+  },{rootMargin:'300px'});
+  io.observe(root);
 });
 var rsz=null;
-window.addEventListener('resize',function(){ clearTimeout(rsz); rsz=setTimeout(build,180); });
-build();
+window.addEventListener('resize',function(){
+  clearTimeout(rsz);
+  rsz=setTimeout(function(){ insts.forEach(function(a){ a.rebuild(); }); },200);
+});
 })();
 """
 
 
-def render_edit(idv, seg_q):
-    """タイムライン編集ページ。文字もバーも時間軸上の同じ座標に置く（時間比例レイアウト）。"""
-    if not idv or "/" in idv or idv.startswith("."):
-        return None
-    base = os.path.join(DATA_DIR, idv)
-    segs = _load_json(os.path.join(base, "segments.json"), {}).get("segments", [])
-    try:
-        idx = int(seg_q)
-    except (TypeError, ValueError):
-        return None
-    sg = next((x for x in segs if x.get("index") == idx), None)
-    if sg is None:
-        return None
+def timeline_block(idv, sg, tsegments, silence):
+    """文字起こしの場所に置くタイムライン。別ページは作らない（オーナー指示・2026-08-05）。"""
+    idx = sg.get("index")
     s, e = float(sg["start_sec"]), float(sg["end_sec"])
-    drops = sg.get("drops") or []
-    tr = _load_json(os.path.join(base, "transcript.json"), {})
-
-    # 単語は {t: 表記, s: 開始, e: 終了} だけ渡す。描画位置はブラウザ側で時刻から決める。
     words = []
-    for w in (tr.get("word_segments") or []):
-        st, en = w.get("start"), w.get("end")
-        if st is None or en is None or not (s <= st < e):
-            continue
-        tok = (w.get("word") or "").strip()
-        if tok:
-            words.append({"t": tok, "s": round(float(st), 3), "e": round(float(en), 3)})
+    for tseg in tsegments:
+        for w in (tseg.get("words") or []):
+            st, en = w.get("start"), w.get("end")
+            if st is None or en is None or not (s <= st < e):
+                continue
+            tok = (w.get("word") or "").strip()
+            if tok:
+                words.append({"t": tok, "s": round(float(st), 3), "e": round(float(en), 3)})
     words.sort(key=lambda w: w["s"])
-
-    src_name = None
-    if os.path.isdir(base):
-        names = sorted(os.listdir(base))
-        src_name = next((n for n in names if n.lower().endswith(".m4a")), None) \
-            or next((n for n in names if n.lower().endswith((".mp3", ".wav", ".mp4"))), None)
+    sil = [[max(a, s), min(b, e)] for a, b in silence if b > s and a < e]
+    sil = [[round(a, 3), round(b, 3)] for a, b in sil if b - a > 0.01]
 
     data = json.dumps({"id": idv, "index": idx, "segStart": s, "segEnd": e,
-                       "drops": drops, "words": words},
+                       "drops": sg.get("drops") or [], "words": words, "silence": sil},
                       ensure_ascii=False).replace("</", "<\\/")
-    if src_name:
-        audio_html = (f"<audio id='aud' src='/media?p={urllib.parse.quote(idv + '/' + src_name)}'"
-                      " preload='metadata' style='display:none'></audio>")
-    else:
-        audio_html = ("<p class='meta'>元音源が見つからないため再生できません（編集と保存は可能）。</p>"
-                      "<audio id='aud' style='display:none'></audio>")
-
-    dur = int(round(e - s))
-    body = (
-        f"<style>{EDIT_CSS}</style>"
-        f"<div class='crumb'><a href='/id?id={urllib.parse.quote(idv)}#seg{idx}'>← {esc(idv)} 生成物</a></div>"
-        f"<h1>{idx}　{esc(sg.get('title') or '')}</h1>"
-        f"<div class='meta'>元音源 {fmt_time(s)}〜{fmt_time(e)}（{dur // 60}分{dur % 60}秒）"
-        f" ・ 単語 {len(words)}</div>"
-        + audio_html +
-        "<div class='etoolbar'>"
-        "<button id='ebtn'>▶ 再生</button>"
-        "<span class='etime' id='etime'>0:00.00</span>"
-        "<span class='ekeep' id='ekeep'></span>"
-        "<button id='ezout'>−</button><button id='ezin'>＋</button>"
-        "<span class='ezoom' id='ezoom'></span>"
-        "<span class='estatus' id='estatus'>保存済み</span>"
+    vad_note = ("緑＝発話 / 黄＝無音（黄をダブルクリックでその無音だけ落とす）"
+                if sil else "VAD 未実行のため塗り分けなし（python scripts/detect_vad.py &lt;ID&gt;）")
+    return (
+        f"<div class='tl' id='tl{idx}'>"
+        "<div class='tlbar'>"
+        "<button class='tlplay'>▶ 再生</button>"
+        "<span class='tltime'>0:00.00</span>"
+        "<span class='tlkeep'></span>"
+        "<button class='tlzout'>−</button><button class='tlzin'>＋</button>"
+        "<span class='tlzoom'></span>"
+        "<button class='tldropsil'>無音を一括で落とす</button>"
+        "<span class='tlstat'>保存済み</span>"
         "</div>"
-        "<div class='ehelp'>"
-        "文字は時間軸上の位置に置いてあるので、<b>文字と文字のあいだの空白がそのまま無音の長さ</b>です。"
-        "下のバーが残る区間で、切ると消えます。"
-        "Space 再生/停止（カット部はスキップ）・⌘D スプリット・バー端をドラッグでトリム・"
-        "バーをクリックで選択して Delete で削除・⌘Z 取り消し・⌘± でズーム。"
-        "編集は自動保存され segments.json の drops に入ります。"
+        f"<div class='tlhelp'>文字は時間軸上の位置に置いてあるので、文字間の空白がそのまま無音の長さです。"
+        f"バーは残す区間で、切らない限り1本のままです。{vad_note}。"
+        "Space 再生（カット部はスキップ）・⌘D スプリット・端をドラッグでトリム・"
+        "クリックで選択して Delete で削除・⌘Z 取り消し・⌘± ズーム。自動保存されます。</div>"
+        f"<div class='tlrows'><div class='tlwait'>スクロールすると組み上がります（単語 {len(words)}）…</div></div>"
+        f"<script type='application/json'>{data}</script>"
         "</div>"
-        "<div id='rows'></div>"
-        f"<script type='application/json' id='edit-data'>{data}</script>"
-        f"<script>{EDIT_JS}</script>"
     )
-    return page(f"{idv} #{idx} タイムライン編集", body)
 
 
 def apply_timeline_save(payload):
@@ -621,7 +645,7 @@ def page(title, body):
     return (
         "<!doctype html><html lang='ja'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-        f"<title>{esc(title)}</title><style>{PAGE_CSS}</style>"
+        f"<title>{esc(title)}</title><style>{PAGE_CSS}{TIMELINE_CSS}</style>"
         "<script>document.documentElement.dataset.theme="
         "localStorage.getItem('theme')||'light';</script></head>"
         f"<body><button class='theme-btn' onclick=\"var r=document.documentElement,"
@@ -648,6 +672,7 @@ def page(title, body):
         "document.querySelectorAll('.playing').forEach(function(x){x.classList.remove('playing');});"
         "if(best&&t-bt<90)best.classList.add('playing');},true);"
         "</script>"
+        f"<script>{TIMELINE_JS}</script>"
         "</body></html>"
     ).encode("utf-8")
 
@@ -700,6 +725,7 @@ def load_id_data(idv):
     cutlist = _load_json(cutlist_path, {"speakers": [], "manual": []})
     cutdec = _load_json(os.path.join(base, "cut_decisions.json"), {"cuts": []})
     ratings = _load_json(os.path.join(base, "ratings.json"), {"ratings": []})
+    vad = _load_json(os.path.join(base, "vad.json"), {})
     return {
         "segments": segments,
         "cand_by_title": cand_by_title,
@@ -712,6 +738,8 @@ def load_id_data(idv):
         "cut_manual": cutlist.get("manual", []),
         "cut_decisions": cutdec.get("cuts", []),
         "ratings_by_index": {r.get("index"): r for r in ratings.get("ratings", [])},
+        # VAD の無音区間。バーの中を緑(発話)/黄(無音)で塗り分けるのに使う。
+        "silence_spans": [tuple(x) for x in vad.get("silence", [])],
     }
 
 
@@ -1175,8 +1203,7 @@ def render_id(idv):
             "<div class='seghd'>"
             f"<h2><span class='rank'>{idx}</span>　{esc(title)}</h2>"
             + rate_html +
-            f"<div class='meta'>{dur_jp} [{fmt_time(s)}〜{fmt_time(e)}]　"
-            f"<a class='editlink' href='/edit?id={urllib.parse.quote(idv)}&seg={idx}'>タイムライン編集</a></div></div>"
+            f"<div class='meta'>{dur_jp} [{fmt_time(s)}〜{fmt_time(e)}]</div></div>"
         )
 
         if segfolder and os.path.isfile(os.path.join(DATA_DIR, idv, "contents", segfolder, "final.mp4")):
@@ -1199,10 +1226,10 @@ def render_id(idv):
         quotes = sg.get("highlight_quotes") or (cand or {}).get("highlight_quotes") or []
         trim_done = bool(segfolder) and os.path.isfile(
             os.path.join(DATA_DIR, idv, "contents", segfolder, "final_orig.mp4"))
-        tr_html = render_transcript(d["tsegments"], s, e, regions, quotes, gaps, drops, f"vid{idx}",
-                                    trim_done, seg_no=idx)
+        # 文字起こしの場所はタイムラインにする（オーナー指示・2026-08-05）。
+        # 別ページを開かず、この画面で切る。
         parts.append("<div class='transcript'>"
-                     + (tr_html or "<p class='meta'>文字起こしなし</p>") + "</div>")
+                     + timeline_block(idv, sg, d["tsegments"], d["silence_spans"]) + "</div>")
         parts.append("</div>")
 
     return page(f"{idv} 生成物", "".join(parts))
@@ -1272,13 +1299,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_html(render_index())
             elif route == "/id":
                 content = render_id((qs.get("id") or [""])[0])
-                if content is None:
-                    self._send_html(page("404", "<h1>404</h1><a href='/'>一覧へ</a>"), 404)
-                else:
-                    self._send_html(content)
-            elif route == "/edit":
-                content = render_edit((qs.get("id") or [""])[0],
-                                      (qs.get("seg") or [""])[0])
                 if content is None:
                     self._send_html(page("404", "<h1>404</h1><a href='/'>一覧へ</a>"), 404)
                 else:
