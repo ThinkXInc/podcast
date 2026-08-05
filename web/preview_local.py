@@ -186,6 +186,7 @@ TIMELINE_CSS = """
 .sil { position:absolute; top:0; height:16px; background:#a89a3c; }
 .cutz { position:absolute; top:0; height:16px; background:#2e2e2e; }
 /* ドラッグ中の端は印として明示する（AfterEffects と同様） */
+.splitline { position:absolute; top:-3px; height:22px; width:2px; background:#e8e8e8; }
 .edge { position:absolute; top:-2px; height:20px; width:2px; background:#e8e8e8; opacity:0; }
 .edge.on { opacity:1; }
 .hoverline { position:absolute; top:-26px; bottom:-2px; width:1px; background:#9ca3af;
@@ -321,7 +322,16 @@ function makeTimeline(root){
         d.style.left=X(R,a)+'px'; d.style.width=Math.max(1,X(R,b)-X(R,a))+'px';
         R.strip.appendChild(d);
       });
-      /* 4) ドラッグできる端（keeps の境界）を記録。選択中は枠で示す */
+      /* 4) スプリット位置に縦線を出す。分割しただけでは両側とも「残す」なので
+         線が無いと何も起きていないように見え、端を掴むこともできない。 */
+      for(var i2=0;i2+1<ks.length;i2++){
+        if(Math.abs(ks[i2][1]-ks[i2+1][0])>EPS) continue;
+        var bt=ks[i2][1];
+        if(bt<R.t0||bt>R.t1) continue;
+        var sp2=document.createElement('div'); sp2.className='splitline';
+        sp2.style.left=(X(R,bt)-1)+'px'; R.strip.appendChild(sp2);
+      }
+      /* 5) ドラッグできる端（keeps の境界）を記録。選択中は枠で示す */
       ks.forEach(function(k){
         var ki=keeps.indexOf(k);
         if(k[1]<=R.t0||k[0]>=R.t1) return;
@@ -390,9 +400,13 @@ function makeTimeline(root){
   }
   function splitAt(t){
     var ki=keeps.findIndex(function(k){return t>k[0]+MINW&&t<k[1]-MINW;});
-    if(ki<0) return;
+    if(ki<0){
+      setStatus('その位置では分割できません（バーの上をクリックして位置を決めてください）');
+      return;
+    }
     pushUndo(); var k=keeps[ki];
     keeps.splice(ki,1,[k[0],t],[t,k[1]]); selKi=-1; afterEdit();
+    setStatus('分割しました（端をドラッグするとカットできます）');
   }
   function dropRange(a,b){
     var ki=keeps.findIndex(function(k){return k[0]<b-EPS&&a<k[1]-EPS;});
@@ -448,8 +462,8 @@ function makeTimeline(root){
   function edgesAt(R,x){
     var out=[];
     R.bars.forEach(function(b){
-      if(b.edgeS&&Math.abs(x-b.x0)<6) out.push({ki:b.ki,which:0});
-      if(b.edgeE&&Math.abs(x-b.x1)<6) out.push({ki:b.ki,which:1});
+      if(b.edgeS&&Math.abs(x-b.x0)<8) out.push({ki:b.ki,which:0});
+      if(b.edgeE&&Math.abs(x-b.x1)<8) out.push({ki:b.ki,which:1});
     });
     return out;
   }
