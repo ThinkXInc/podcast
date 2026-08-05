@@ -96,6 +96,8 @@ CHUNK_OVERLAP="${WHISPER_CHUNK_OVERLAP:-6}"
 # 作り方: python scripts/make_asr_prompt.py <ID>
 # 引数は配列で持つ。文字列に入れて $VAR で展開すると、パスに空白があったとき
 # （また zsh 由来のシェルでは常に）1引数に潰れて argparse に弾かれる。
+# 展開側は ${ARR[@]+"${ARR[@]}"} と書く。macOS の bash 3.2 は set -u のもとで
+# 空配列の "${ARR[@]}" を unbound variable として落とすため（bash 4.4 以降は問題ない）。
 PROMPT_FILE="$OUT/asr_prompt.txt"
 PROMPT_ARGS=()
 if [ "${WHISPER_PROMPT:-1}" != "0" ] && [ -s "$PROMPT_FILE" ]; then
@@ -150,7 +152,8 @@ while read -r ci cstart cend; do
     # Python API 経由なら既定の温度梯子が効くので、専用ドライバを呼ぶ。
     "$VENV/bin/python3" "$HERE/scripts/mlx_transcribe.py" \
       "$cfile" "$cdir/chunk.json" \
-      --model "$MLX_MODEL" --lang "$LANG" "${PROMPT_ARGS[@]}" </dev/null
+      --model "$MLX_MODEL" --lang "$LANG" \
+      ${PROMPT_ARGS[@]+"${PROMPT_ARGS[@]}"} </dev/null
   else
     whisperx "$cfile" \
       --model "$MODEL" --device "$DEVICE" --compute_type "$COMPUTE" \
