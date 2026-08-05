@@ -155,56 +155,68 @@ video { width: 100%; max-width: 860px; display: block; border-radius: 6px;
 """
 
 # ---------- タイムライン編集ページ (/edit) ----------
-# AE/Premiere 風: 各テキスト行の直下にタイムラインバー。バー＝残す区間(keeps)。
-# 文字とバーの水平位置は単語スパンの実レイアウトから対応付ける（折り返し行ごとにストリップ生成）。
+# AE/Premiere 風。要点は「文字もバーも同じ時間軸の座標に置く」こと。
+# x = (単語の開始時刻 - その行の先頭時刻) * pxPerSec で配置するので、
+# 無音のぶんだけ文字と文字のあいだが空き、見た目がそのまま時間になる。
+# バーは残す区間(keeps)で、切った区間はバーが消える。
 EDIT_CSS = """
 .etoolbar { position:sticky; top:0; z-index:8; display:flex; align-items:center; gap:14px;
-            padding:8px 2px; background:#1b1b1b; border-bottom:1px solid #ccc3;
-            font-size:13px; }
+            padding:8px 2px; background:#1b1b1b; border-bottom:1px solid #ccc3; font-size:13px; }
 :root[data-theme="light"] .etoolbar { background:#ffffff; }
 .etoolbar button { font-size:13px; padding:2px 12px; cursor:pointer; background:transparent;
                    color:inherit; border:1px solid #6b728088; border-radius:5px; }
 .etoolbar button:hover { background:#6b728033; }
-.etime { font-variant-numeric:tabular-nums; font-size:14px; }
+.etime { font-variant-numeric:tabular-nums; font-size:14px; min-width:78px; }
 .ekeep { color:#9ca3af; font-variant-numeric:tabular-nums; }
 .estatus { color:#9ca3af; margin-left:auto; }
-.ehelp { color:#6b7280; font-size:12px; margin:6px 0 18px; line-height:1.8; }
-.eblock { margin:2px 0 6px; }
-.epara { position:relative; line-height:3.0; font-size:15px; }
-.w { display:inline-block; white-space:pre; border-radius:2px; cursor:pointer; }
-.w.cut { color:#575757; }
+.ezoom { color:#9ca3af; font-size:12px; }
+.ehelp { color:#6b7280; font-size:12px; margin:6px 0 16px; line-height:1.9; }
+
+/* 1行＝一定の時間幅。文字もバーも x = (t - 行頭時刻) * pxPerSec に置く。
+   だから無音のぶんだけ文字と文字のあいだが空き、見た目がそのまま時間になる。 */
+.row { position:relative; margin:0 0 4px; }
+.rowtime { position:absolute; left:0; top:0; font-size:10px; color:#6b7280;
+           font-variant-numeric:tabular-nums; }
+.lane { position:relative; margin-left:52px; height:46px; }
+.w { position:absolute; top:0; white-space:pre; font-size:14px; line-height:20px;
+     cursor:pointer; border-radius:2px; }
+.w.cut { color:#585858; }
 :root[data-theme="light"] .w.cut { color:#c9c9c9; }
-.w.playing { background:#2563eb2e; }
-.strip { position:absolute; left:0; right:0; height:15px; cursor:crosshair; }
-.bar { position:absolute; top:4px; height:7px; background:#7d8b9f; border-radius:2px; }
+.w.playing { background:#2563eb33; }
+.strip { position:absolute; left:0; right:0; top:24px; height:18px; cursor:crosshair; }
+.bar { position:absolute; top:3px; height:9px; background:#7d8b9f; border-radius:2px; }
 :root[data-theme="light"] .bar { background:#9aa6b6; }
 .bar.sel { background:#2563eb; }
-.hoverline { position:absolute; top:-3px; bottom:0; width:1px; background:#9ca3af;
+.gapline { position:absolute; top:7px; height:1px; background:#4b5563; }
+:root[data-theme="light"] .gapline { background:#d4d4d4; }
+.hoverline { position:absolute; top:-24px; bottom:-2px; width:1px; background:#9ca3af;
              display:none; pointer-events:none; }
-.playline { position:absolute; top:-3px; bottom:0; width:2px; background:#e11d48;
-            display:none; pointer-events:none; }
-.tlabel { position:absolute; top:-14px; font-size:10px; color:#9ca3af; display:none;
+.playline { position:absolute; top:-24px; bottom:-2px; width:2px; background:#e11d48;
+            display:none; pointer-events:none; z-index:3; }
+.tlabel { position:absolute; top:-38px; font-size:10px; color:#9ca3af; display:none;
           pointer-events:none; font-variant-numeric:tabular-nums; white-space:nowrap; }
 """
 
 EDIT_JS = r"""
 (function(){
 var D=JSON.parse(document.getElementById('edit-data').textContent);
+var EPS=0.01, MINW=0.02;
 var audio=document.getElementById('aud');
-var MINW=0.02, EPS=0.01;
+var wrap=document.getElementById('rows');
 var keeps=complement(D.drops||[]);
 var undoStack=[], redoStack=[];
 var playhead=D.segStart, selKi=-1, playing=false;
-var lines=[], dragging=null, pendingDrag=null, saveTimer=null;
-var wordEls=[].slice.call(document.querySelectorAll('.w'));
-var words=wordEls.map(function(el){return {el:el,s:+el.dataset.s,e:+el.dataset.e};});
+/* 既定140px/秒。実測で1行あたり平均31語≒62字なので、100px/秒だと1字13pxしか取れず
+   14pxの文字が重なる。140なら1字18px前後になり、押し出し補正がほぼ働かない。 */
+var pxPerSec=parseFloat(localStorage.getItem('edit_pps'))||140;
+var rows=[], dragging=null, pendingDrag=null, saveTimer=null, laneW=0;
 
 function complement(drops){
   var ks=[], t=D.segStart;
-  var ds=drops.map(function(d){return [Math.max(D.segStart,+d[0]),Math.min(D.segEnd,+d[1])];})
-              .filter(function(d){return d[1]-d[0]>EPS;})
-              .sort(function(a,b){return a[0]-b[0];});
-  ds.forEach(function(d){ if(d[0]-t>EPS) ks.push([t,d[0]]); t=Math.max(t,d[1]); });
+  (drops||[]).map(function(d){return [Math.max(D.segStart,+d[0]),Math.min(D.segEnd,+d[1])];})
+    .filter(function(d){return d[1]-d[0]>EPS;})
+    .sort(function(a,b){return a[0]-b[0];})
+    .forEach(function(d){ if(d[0]-t>EPS) ks.push([t,d[0]]); t=Math.max(t,d[1]); });
   if(D.segEnd-t>EPS) ks.push([t,D.segEnd]);
   return ks;
 }
@@ -220,119 +232,114 @@ function currentDrops(){
 function fmt(t){
   t=Math.max(0,t-D.segStart);
   var m=Math.floor(t/60), s=t-m*60;
-  return m+':' + (s<10?'0':'') + s.toFixed(2);
+  return m+':'+(s<10?'0':'')+s.toFixed(2);
+}
+function fmtAbs(t){
+  var h=Math.floor(t/3600), m=Math.floor((t%3600)/60), s=Math.floor(t%60);
+  return (h?h+':':'')+(m<10&&h?'0':'')+m+':'+(s<10?'0':'')+s;
 }
 
-/* ---- 行ごとのストリップ構築（文字とバーの水平位置を一致させる） ---- */
-function X(L,t){
-  var p=L.pts;
-  if(t<=p[0].t) return p[0].x;
-  if(t>=p[p.length-1].t) return p[p.length-1].x;
-  for(var i=1;i<p.length;i++){
-    if(t<=p[i].t){
-      var dt=p[i].t-p[i-1].t;
-      if(dt<=0) return p[i].x;
-      return p[i-1].x+(p[i].x-p[i-1].x)*(t-p[i-1].t)/dt;
+/* ---- 時間比例レイアウト。1行の時間幅 = laneW / pxPerSec ---- */
+function build(){
+  wrap.innerHTML='';
+  rows=[];
+  var probe=document.createElement('div');
+  probe.className='lane'; wrap.appendChild(probe);
+  laneW=probe.clientWidth||800; wrap.removeChild(probe);
+  var rowSec=laneW/pxPerSec;
+  var nRows=Math.ceil((D.segEnd-D.segStart)/rowSec);
+  document.getElementById('ezoom').textContent=
+    pxPerSec.toFixed(0)+'px/秒 ・ 1行'+rowSec.toFixed(1)+'秒 ・ '+nRows+'行';
+
+  var wi=0;
+  for(var r=0;r<nRows;r++){
+    var t0=D.segStart+r*rowSec, t1=Math.min(D.segEnd,t0+rowSec);
+    var row=document.createElement('div'); row.className='row';
+    var lab=document.createElement('div'); lab.className='rowtime';
+    lab.textContent=fmtAbs(t0); row.appendChild(lab);
+    var lane=document.createElement('div'); lane.className='lane'; row.appendChild(lane);
+    var strip=document.createElement('div'); strip.className='strip'; lane.appendChild(strip);
+
+    /* 単語を時間位置に置く。重なるときだけ右へ最小限ずらす */
+    var lastRight=-1e9, els=[];
+    while(wi<D.words.length && D.words[wi].s < t1){
+      var w=D.words[wi];
+      if(w.e<=t0){ wi++; continue; }
+      var x=(w.s-t0)*pxPerSec;
+      if(x<lastRight) x=lastRight;
+      var el=document.createElement('span');
+      el.className='w'; el.textContent=w.t;
+      el.style.left=x+'px';
+      el.dataset.s=w.s; el.dataset.e=w.e;
+      lane.appendChild(el);
+      els.push(el);
+      lastRight=x+el.offsetWidth;
+      wi++;
     }
+    wrap.appendChild(row);
+    var R={t0:t0,t1:t1,lane:lane,strip:strip,els:els,bars:[]};
+    rows.push(R);
+    bindStrip(R);
   }
-  return p[p.length-1].x;
+  renderBars(); styleWords(); movePlayhead();
 }
-function T(L,x){
-  var p=L.pts;
-  if(x<=p[0].x) return p[0].t;
-  if(x>=p[p.length-1].x) return p[p.length-1].t;
-  for(var i=1;i<p.length;i++){
-    if(x<=p[i].x){
-      var dx=p[i].x-p[i-1].x;
-      if(dx<=0) return p[i].t;
-      return p[i-1].t+(p[i].t-p[i-1].t)*(x-p[i-1].x)/dx;
-    }
-  }
-  return p[p.length-1].t;
-}
-function buildStrips(){
-  lines=[];
-  [].forEach.call(document.querySelectorAll('.epara'),function(para){
-    [].forEach.call(para.querySelectorAll('.strip'),function(s){s.remove();});
-    var ws=[].slice.call(para.querySelectorAll('.w'));
-    if(!ws.length) return;
-    var groups={};
-    ws.forEach(function(el){
-      var k=Math.round(el.offsetTop/8)*8;
-      (groups[k]=groups[k]||[]).push(el);
-    });
-    Object.keys(groups).map(Number).sort(function(a,b){return a-b;}).forEach(function(k){
-      var g=groups[k].sort(function(a,b){return a.offsetLeft-b.offsetLeft;});
-      var pts=[], lastT=-1e9;
-      g.forEach(function(el){
-        var s=Math.max(+el.dataset.s,lastT), e=Math.max(+el.dataset.e,s);
-        lastT=e;
-        pts.push({x:el.offsetLeft,t:s},{x:el.offsetLeft+el.offsetWidth,t:e});
-      });
-      var strip=document.createElement('div');
-      strip.className='strip';
-      strip.style.top=(g[0].offsetTop+g[0].offsetHeight+2)+'px';
-      para.appendChild(strip);
-      var L={strip:strip,pts:pts,t0:pts[0].t,t1:pts[pts.length-1].t,bars:[]};
-      strip._line=L; lines.push(L);
-      bindStrip(L);
-    });
-  });
-  renderBars(); updateWordStyles(); positionPlayhead();
-}
+function X(R,t){ return (t-R.t0)*pxPerSec; }
+function T(R,x){ return R.t0 + x/pxPerSec; }
+
 function renderBars(){
-  lines.forEach(function(L){
-    L.strip.innerHTML='';
-    L.bars=[];
+  rows.forEach(function(R){
+    R.strip.innerHTML=''; R.bars=[];
+    var g=document.createElement('div'); g.className='gapline';
+    g.style.left='0px'; g.style.width=X(R,R.t1)+'px'; R.strip.appendChild(g);
     keeps.forEach(function(k,ki){
-      if(k[1]<L.t0||k[0]>L.t1) return;
-      var x0=X(L,Math.max(k[0],L.t0)), x1=X(L,Math.min(k[1],L.t1));
-      if(x1-x0<1) x1=x0+1;
+      if(k[1]<=R.t0||k[0]>=R.t1) return;
+      var a=Math.max(k[0],R.t0), b=Math.min(k[1],R.t1);
+      var x0=X(R,a), x1=X(R,b);
       var bar=document.createElement('div');
       bar.className='bar'+(ki===selKi?' sel':'');
-      bar.style.left=x0+'px'; bar.style.width=(x1-x0)+'px';
-      L.strip.appendChild(bar);
-      L.bars.push({ki:ki, x0:x0, x1:x1,
-                   edgeS:(k[0]>=L.t0-1e-6), edgeE:(k[1]<=L.t1+1e-6)});
+      bar.style.left=x0+'px'; bar.style.width=Math.max(1,x1-x0)+'px';
+      R.strip.appendChild(bar);
+      R.bars.push({ki:ki,x0:x0,x1:x1,edgeS:(k[0]>=R.t0-1e-9),edgeE:(k[1]<=R.t1+1e-9)});
     });
-    L.hover=document.createElement('div'); L.hover.className='hoverline'; L.strip.appendChild(L.hover);
-    L.play=document.createElement('div'); L.play.className='playline'; L.strip.appendChild(L.play);
-    L.tlab=document.createElement('div'); L.tlab.className='tlabel'; L.strip.appendChild(L.tlab);
+    R.hover=document.createElement('div'); R.hover.className='hoverline'; R.strip.appendChild(R.hover);
+    R.play=document.createElement('div'); R.play.className='playline'; R.strip.appendChild(R.play);
+    R.tlab=document.createElement('div'); R.tlab.className='tlabel'; R.strip.appendChild(R.tlab);
   });
 }
-function updateWordStyles(){
-  words.forEach(function(w){
-    var mid=(w.s+w.e)/2;
-    var keep=keeps.some(function(k){return k[0]<=mid&&mid<k[1];});
-    w.el.classList.toggle('cut',!keep);
+function inKeep(t){ return keeps.some(function(k){return k[0]<=t&&t<k[1];}); }
+function styleWords(){
+  rows.forEach(function(R){
+    R.els.forEach(function(el){
+      var mid=(+el.dataset.s + +el.dataset.e)/2;
+      el.classList.toggle('cut', !inKeep(mid));
+    });
   });
   var kept=keeps.reduce(function(a,k){return a+(k[1]-k[0]);},0);
   var m=Math.floor(kept/60), s=Math.round(kept-m*60);
   document.getElementById('ekeep').textContent='残り尺 '+m+'分'+(s<10?'0':'')+s+'秒';
 }
-function positionPlayhead(){
-  var t=playhead, target=null;
-  lines.forEach(function(L){ L.play.style.display='none'; });
-  target=lines.find(function(L){return L.t0<=t&&t<=L.t1;});
-  if(!target) target=lines.find(function(L){return L.t0>t;});
-  if(!target&&lines.length) target=lines[lines.length-1];
-  if(target){ target.play.style.left=X(target,t)+'px'; target.play.style.display='block'; }
+function movePlayhead(){
+  rows.forEach(function(R){ R.play.style.display='none'; });
+  var R=rows.find(function(R){return R.t0<=playhead&&playhead<R.t1;})||rows[rows.length-1];
+  if(R){ R.play.style.left=X(R,playhead)+'px'; R.play.style.display='block'; }
   document.getElementById('etime').textContent=fmt(playhead);
 }
-function highlightWord(t){
+function highlight(t){
+  document.querySelectorAll('.w.playing').forEach(function(x){x.classList.remove('playing');});
+  var R=rows.find(function(R){return R.t0<=t&&t<R.t1;});
+  if(!R) return;
   var best=null;
-  words.forEach(function(w){ if(w.s<=t+0.01&&(!best||w.s>best.s)) best=w; });
-  [].forEach.call(document.querySelectorAll('.w.playing'),function(x){x.classList.remove('playing');});
-  if(best&&t-best.s<15) best.el.classList.add('playing');
+  R.els.forEach(function(el){ if(+el.dataset.s<=t+0.01&&(!best||+el.dataset.s>+best.dataset.s)) best=el; });
+  if(best&&t-(+best.dataset.s)<10) best.classList.add('playing');
 }
 
-/* ---- 編集操作 ---- */
+/* ---- 編集 ---- */
 function pushUndo(){ undoStack.push(JSON.stringify(keeps)); if(undoStack.length>200)undoStack.shift(); redoStack=[]; }
+function afterEdit(){ renderBars(); styleWords(); movePlayhead(); scheduleSave(); }
 function undo(){ if(!undoStack.length)return; redoStack.push(JSON.stringify(keeps));
   keeps=JSON.parse(undoStack.pop()); selKi=-1; afterEdit(); }
 function redo(){ if(!redoStack.length)return; undoStack.push(JSON.stringify(keeps));
   keeps=JSON.parse(redoStack.pop()); selKi=-1; afterEdit(); }
-function afterEdit(){ renderBars(); updateWordStyles(); positionPlayhead(); scheduleSave(); }
 function splitAt(t){
   var ki=keeps.findIndex(function(k){return t>k[0]+MINW&&t<k[1]-MINW;});
   if(ki<0) return;
@@ -342,13 +349,13 @@ function splitAt(t){
   selKi=-1; afterEdit();
 }
 function setStatus(s){ document.getElementById('estatus').textContent=s; }
-function scheduleSave(){ setStatus('未保存の変更あり'); clearTimeout(saveTimer); saveTimer=setTimeout(doSave,700); }
+function scheduleSave(){ setStatus('未保存'); clearTimeout(saveTimer); saveTimer=setTimeout(doSave,700); }
 function doSave(){
   setStatus('保存中…');
   fetch('/edit_save',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({id:D.id,index:D.index,drops:currentDrops()})})
-  .then(function(r){ setStatus(r.ok?'保存済み（動画反映は render 再実行）':'保存失敗'); })
-  .catch(function(){ setStatus('保存失敗（サーバ未接続）'); });
+  .then(function(r){ setStatus(r.ok?'保存済み（動画は render 再実行で反映）':'保存失敗'); })
+  .catch(function(){ setStatus('保存失敗'); });
 }
 
 /* ---- 再生（カット区間はスキップ） ---- */
@@ -356,64 +363,66 @@ function tick(){
   if(!playing) return;
   var t=audio.currentTime;
   if(t>=D.segEnd){ stopPlay(); return; }
-  var inKeep=keeps.some(function(k){return t>=k[0]-0.03&&t<k[1];});
-  if(!inKeep){
+  if(!inKeep(t)){
     var nk=keeps.find(function(k){return k[0]>t;});
     if(!nk){ stopPlay(); return; }
     audio.currentTime=nk[0]+0.001;
   }
   playhead=audio.currentTime;
-  positionPlayhead(); highlightWord(playhead);
+  movePlayhead(); highlight(playhead);
   requestAnimationFrame(tick);
 }
 function startPlay(){
   if(playing||!audio) return;
-  var k=keeps.find(function(k){return playhead>=k[0]&&playhead<k[1];});
-  if(!k){ var nk=keeps.find(function(k){return k[0]>=playhead;}); playhead=nk?nk[0]:(keeps[0]?keeps[0][0]:D.segStart); }
+  if(!inKeep(playhead)){
+    var nk=keeps.find(function(k){return k[0]>=playhead;});
+    playhead=nk?nk[0]:(keeps[0]?keeps[0][0]:D.segStart);
+  }
   audio.currentTime=playhead;
-  audio.play().then(function(){ playing=true; document.getElementById('ebtn').textContent='∎ 停止';
-    requestAnimationFrame(tick); }).catch(function(){});
+  audio.play().then(function(){ playing=true;
+    document.getElementById('ebtn').textContent='∎ 停止'; requestAnimationFrame(tick);
+  }).catch(function(){ setStatus('再生できません（音源なし）'); });
 }
 function stopPlay(){
   if(audio) audio.pause();
   playing=false;
   document.getElementById('ebtn').textContent='▶ 再生';
-  [].forEach.call(document.querySelectorAll('.w.playing'),function(x){x.classList.remove('playing');});
+  document.querySelectorAll('.w.playing').forEach(function(x){x.classList.remove('playing');});
 }
 document.getElementById('ebtn').onclick=function(){ playing?stopPlay():startPlay(); };
 
-/* ---- ストリップのマウス操作 ---- */
-function edgeCandidates(L,x){
+/* ---- ストリップ操作 ---- */
+function edgesAt(R,x){
   var out=[];
-  L.bars.forEach(function(b){
+  R.bars.forEach(function(b){
     if(b.edgeS&&Math.abs(x-b.x0)<6) out.push({ki:b.ki,which:0});
     if(b.edgeE&&Math.abs(x-b.x1)<6) out.push({ki:b.ki,which:1});
   });
   return out;
 }
-function bindStrip(L){
-  L.strip.addEventListener('mousemove',function(ev){
+function bindStrip(R){
+  R.strip.addEventListener('mousemove',function(ev){
     if(dragging||pendingDrag) return;
-    var x=ev.clientX-L.strip.getBoundingClientRect().left;
-    L.hover.style.left=x+'px'; L.hover.style.display='block';
-    L.tlab.style.left=(x+4)+'px'; L.tlab.style.display='block';
-    L.tlab.textContent=fmt(T(L,x));
-    L.strip.style.cursor=edgeCandidates(L,x).length?'ew-resize':'crosshair';
+    var x=ev.clientX-R.strip.getBoundingClientRect().left;
+    R.hover.style.left=x+'px'; R.hover.style.display='block';
+    R.tlab.style.left=(x+4)+'px'; R.tlab.style.display='block';
+    R.tlab.textContent=fmt(T(R,x));
+    R.strip.style.cursor=edgesAt(R,x).length?'ew-resize':'crosshair';
   });
-  L.strip.addEventListener('mouseleave',function(){
-    L.hover.style.display='none'; L.tlab.style.display='none';
+  R.strip.addEventListener('mouseleave',function(){
+    R.hover.style.display='none'; R.tlab.style.display='none';
   });
-  L.strip.addEventListener('mousedown',function(ev){
+  R.strip.addEventListener('mousedown',function(ev){
     ev.preventDefault();
-    var x=ev.clientX-L.strip.getBoundingClientRect().left;
-    var cand=edgeCandidates(L,x);
-    if(cand.length===1){ pushUndo(); dragging={L:L,ki:cand[0].ki,which:cand[0].which}; }
-    else if(cand.length>1){ pendingDrag={L:L,cand:cand,x0:ev.clientX}; }
+    var x=ev.clientX-R.strip.getBoundingClientRect().left;
+    var cand=edgesAt(R,x);
+    if(cand.length===1){ pushUndo(); dragging={R:R,ki:cand[0].ki,which:cand[0].which}; }
+    else if(cand.length>1){ pendingDrag={R:R,cand:cand,x0:ev.clientX}; }
     else{
-      playhead=T(L,x);
-      var hit=L.bars.find(function(b){return x>=b.x0&&x<=b.x1;});
+      playhead=T(R,x);
+      var hit=R.bars.find(function(b){return x>=b.x0&&x<=b.x1;});
       selKi=hit?hit.ki:-1;
-      renderBars(); positionPlayhead();
+      renderBars(); movePlayhead();
       if(playing) audio.currentTime=playhead;
     }
   });
@@ -424,20 +433,19 @@ document.addEventListener('mousemove',function(ev){
     if(Math.abs(dx)>=3){
       var pick=null;
       pendingDrag.cand.forEach(function(c){
-        if(dx>0&&c.which===0) pick=c;      /* 右へ→右バーの頭を削る */
-        if(dx<0&&c.which===1&&!pick) pick=c; /* 左へ→左バーの尻を削る */
+        if(dx>0&&c.which===0) pick=c;
+        if(dx<0&&c.which===1&&!pick) pick=c;
       });
-      pick=pick||pendingDrag.cand[0];
       pushUndo();
-      dragging={L:pendingDrag.L,ki:pick.ki,which:pick.which};
+      dragging={R:pendingDrag.R,ki:(pick||pendingDrag.cand[0]).ki,
+                which:(pick||pendingDrag.cand[0]).which};
       pendingDrag=null;
     }
     return;
   }
   if(!dragging) return;
-  var L=dragging.L;
-  var x=ev.clientX-L.strip.getBoundingClientRect().left;
-  var t=T(L,x);
+  var R=dragging.R;
+  var t=T(R, ev.clientX-R.strip.getBoundingClientRect().left);
   var k=keeps[dragging.ki];
   if(dragging.which===0){
     var lo=dragging.ki>0?keeps[dragging.ki-1][1]:D.segStart;
@@ -446,21 +454,28 @@ document.addEventListener('mousemove',function(ev){
     var hi=dragging.ki<keeps.length-1?keeps[dragging.ki+1][0]:D.segEnd;
     k[1]=Math.max(Math.min(t,hi),k[0]+MINW);
   }
-  renderBars(); updateWordStyles(); positionPlayhead();
+  renderBars(); styleWords(); movePlayhead();
 });
 document.addEventListener('mouseup',function(){
-  if(pendingDrag){ pendingDrag=null; }
+  if(pendingDrag) pendingDrag=null;
   if(dragging){ dragging=null; scheduleSave(); }
 });
 
 /* ---- 単語クリックで頭出し ---- */
-wordEls.forEach(function(el){
-  el.addEventListener('click',function(){
-    playhead=+el.dataset.s;
-    positionPlayhead();
-    if(playing) audio.currentTime=playhead;
-  });
+wrap.addEventListener('click',function(ev){
+  var el=ev.target.closest('.w'); if(!el) return;
+  playhead=+el.dataset.s; movePlayhead();
+  if(playing) audio.currentTime=playhead;
 });
+
+/* ---- ズーム ---- */
+function setZoom(v){
+  pxPerSec=Math.max(20,Math.min(600,v));
+  localStorage.setItem('edit_pps',pxPerSec);
+  build();
+}
+document.getElementById('ezin').onclick=function(){ setZoom(pxPerSec*1.4); };
+document.getElementById('ezout').onclick=function(){ setZoom(pxPerSec/1.4); };
 
 /* ---- キーボード ---- */
 document.addEventListener('keydown',function(e){
@@ -468,21 +483,21 @@ document.addEventListener('keydown',function(e){
   if(e.code==='Space'){ e.preventDefault(); playing?stopPlay():startPlay(); }
   else if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='d'){ e.preventDefault(); splitAt(playhead); }
   else if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='z'){ e.preventDefault(); e.shiftKey?redo():undo(); }
+  else if((e.metaKey||e.ctrlKey)&&(e.key==='='||e.key==='+')){ e.preventDefault(); setZoom(pxPerSec*1.4); }
+  else if((e.metaKey||e.ctrlKey)&&e.key==='-'){ e.preventDefault(); setZoom(pxPerSec/1.4); }
   else if((e.key==='Delete'||e.key==='Backspace')&&selKi>=0){
     e.preventDefault(); pushUndo(); keeps.splice(selKi,1); selKi=-1; afterEdit();
   }
 });
-
 var rsz=null;
-window.addEventListener('resize',function(){ clearTimeout(rsz); rsz=setTimeout(buildStrips,150); });
-window.addEventListener('load',buildStrips);
-buildStrips();
+window.addEventListener('resize',function(){ clearTimeout(rsz); rsz=setTimeout(build,180); });
+build();
 })();
 """
 
 
 def render_edit(idv, seg_q):
-    """タイムライン編集ページ。単語スパン＋行ごとのタイムラインバーで drops を編集する。"""
+    """タイムライン編集ページ。文字もバーも時間軸上の同じ座標に置く（時間比例レイアウト）。"""
     if not idv or "/" in idv or idv.startswith("."):
         return None
     base = os.path.join(DATA_DIR, idv)
@@ -494,72 +509,61 @@ def render_edit(idv, seg_q):
     sg = next((x for x in segs if x.get("index") == idx), None)
     if sg is None:
         return None
-    s, e = sg["start_sec"], sg["end_sec"]
+    s, e = float(sg["start_sec"]), float(sg["end_sec"])
     drops = sg.get("drops") or []
-    tsegments = _load_json(os.path.join(base, "transcript.json"), {}).get("segments", [])
+    tr = _load_json(os.path.join(base, "transcript.json"), {})
 
-    # 元音源（無編集）: タイムラインは未編集の全長が土台なので、必ず元音源で再生する
+    # 単語は {t: 表記, s: 開始, e: 終了} だけ渡す。描画位置はブラウザ側で時刻から決める。
+    words = []
+    for w in (tr.get("word_segments") or []):
+        st, en = w.get("start"), w.get("end")
+        if st is None or en is None or not (s <= st < e):
+            continue
+        tok = (w.get("word") or "").strip()
+        if tok:
+            words.append({"t": tok, "s": round(float(st), 3), "e": round(float(en), 3)})
+    words.sort(key=lambda w: w["s"])
+
     src_name = None
     if os.path.isdir(base):
         names = sorted(os.listdir(base))
         src_name = next((n for n in names if n.lower().endswith(".m4a")), None) \
             or next((n for n in names if n.lower().endswith((".mp3", ".wav", ".mp4"))), None)
 
-    blocks = []
-    last_end = s
-    for tseg in tsegments:
-        ts0, ts1 = tseg.get("start"), tseg.get("end")
-        if ts0 is None or ts1 is None or _overlap(ts0, ts1, s, e) <= 0:
-            continue
-        spans = []
-        first_t = None
-        for w in tseg.get("words") or []:
-            wt, we = w.get("start"), w.get("end")
-            if wt is None or we is None:
-                # タイムスタンプ欠けの単語は直前の終端時刻に貼り付けて表示だけ残す
-                wt = we = last_end
-            if not (s <= wt < e):
-                continue
-            if first_t is None:
-                first_t = wt
-            last_end = we
-            spans.append(f"<span class='w' data-s='{wt:.3f}' data-e='{we:.3f}'>{esc(w.get('word', ''))}</span>")
-        if not spans:
-            continue
-        rel = fmt_time(max(0.0, first_t - s))
-        abs_t = fmt_time(first_t)
-        blocks.append(
-            "<div class='eblock'>"
-            f"<span class='ts'>{rel}　<span>({abs_t})</span></span>"
-            f"<div class='epara'>{''.join(spans)}</div></div>"
-        )
-
     data = json.dumps({"id": idv, "index": idx, "segStart": s, "segEnd": e,
-                       "drops": drops}, ensure_ascii=False).replace("</", "<\\/")
-    audio_html = ""
+                       "drops": drops, "words": words},
+                      ensure_ascii=False).replace("</", "<\\/")
     if src_name:
         audio_html = (f"<audio id='aud' src='/media?p={urllib.parse.quote(idv + '/' + src_name)}'"
                       " preload='metadata' style='display:none'></audio>")
     else:
-        audio_html = ("<p class='meta'>元音源が見つからないため再生はできません"
-                      "（編集と保存は可能）。</p><audio id='aud' style='display:none'></audio>")
+        audio_html = ("<p class='meta'>元音源が見つからないため再生できません（編集と保存は可能）。</p>"
+                      "<audio id='aud' style='display:none'></audio>")
 
+    dur = int(round(e - s))
     body = (
         f"<style>{EDIT_CSS}</style>"
         f"<div class='crumb'><a href='/id?id={urllib.parse.quote(idv)}#seg{idx}'>← {esc(idv)} 生成物</a></div>"
-        f"<h1>{idx}　{esc(sg.get('title') or '')}　<span class='meta'>タイムライン編集</span></h1>"
+        f"<h1>{idx}　{esc(sg.get('title') or '')}</h1>"
+        f"<div class='meta'>元音源 {fmt_time(s)}〜{fmt_time(e)}（{dur // 60}分{dur % 60}秒）"
+        f" ・ 単語 {len(words)}</div>"
         + audio_html +
         "<div class='etoolbar'>"
         "<button id='ebtn'>▶ 再生</button>"
         "<span class='etime' id='etime'>0:00.00</span>"
         "<span class='ekeep' id='ekeep'></span>"
+        "<button id='ezout'>−</button><button id='ezin'>＋</button>"
+        "<span class='ezoom' id='ezoom'></span>"
         "<span class='estatus' id='estatus'>保存済み</span>"
         "</div>"
-        "<div class='ehelp'>バー＝残す区間。Space 再生/停止（カット部はスキップ）・"
-        "⌘D / Ctrl+D 現在位置でスプリット・バー端をドラッグでトリム・"
-        "バーをクリックで選択 → Delete で削除・⌘Z / Ctrl+Z 取り消し。"
-        "編集は自動保存され segments.json の drops に入る（動画への反映は render 再実行）。</div>"
-        + "".join(blocks) +
+        "<div class='ehelp'>"
+        "文字は時間軸上の位置に置いてあるので、<b>文字と文字のあいだの空白がそのまま無音の長さ</b>です。"
+        "下のバーが残る区間で、切ると消えます。"
+        "Space 再生/停止（カット部はスキップ）・⌘D スプリット・バー端をドラッグでトリム・"
+        "バーをクリックで選択して Delete で削除・⌘Z 取り消し・⌘± でズーム。"
+        "編集は自動保存され segments.json の drops に入ります。"
+        "</div>"
+        "<div id='rows'></div>"
         f"<script type='application/json' id='edit-data'>{data}</script>"
         f"<script>{EDIT_JS}</script>"
     )
