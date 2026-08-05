@@ -178,6 +178,14 @@ TIMELINE_CSS = """
 .w { position:absolute; top:16px; white-space:pre; font-size:14px; line-height:20px;
      cursor:pointer; border-radius:2px; }
 .w.cut { color:#8a8a8a; }
+/* 話者の色分け。メイン話者（最多話者＝大塚さん）は既定色のまま、
+   会話相手はモックの赤系に寄せたオレンジ系にする。docs/編集規則.md の
+   「Speaker1 はほぼそのまま／会話相手は基本カット」を目で見て分けられるようにする。 */
+.w.s2 { color:#d97a2b; } .w.s3 { color:#c9603a; } .w.s4 { color:#b8813a; }
+.w.s5 { color:#d4643a; } .w.s6 { color:#c08a3f; } .w.s7 { color:#e0863c; }
+.w.s8 { color:#b06a45; } .w.sx { color:#c9773a; }
+/* カット済みはグレーが優先（話者色より上書き） */
+.w.cut.s2,.w.cut.s3,.w.cut.s4,.w.cut.s5,.w.cut.s6,.w.cut.s7,.w.cut.s8,.w.cut.sx { color:#8a8a8a; }
 .w.playing { background:#2563eb33; }
 /* バーは常に1本の連続した帯。カットしても消さず、黒く塗る（AfterEffects と同じ見え方）。
    青緑＝発話 / 黄＝VADが検出した無音 / 黒＝カット済み。 */
@@ -287,7 +295,8 @@ function makeTimeline(root){
           }
         }
         var el=document.createElement('span');
-        el.className='w'; el.textContent=w.t; el.style.left=x+'px';
+        el.className='w'+((w.p&&w.p!==D.mainSpk)?(' s'+(w.p<=8?w.p:'x')):'');
+        el.textContent=w.t; el.style.left=x+'px';
         el.dataset.s=w.s; el.dataset.e=w.e;
         lane.appendChild(el); els.push(el);
         lastRight=x+el.offsetWidth; prevEnd=w.e; wi++;
@@ -621,7 +630,7 @@ window.addEventListener('resize',function(){
 """
 
 
-def timeline_block(idv, sg, tsegments, silence):
+def timeline_block(idv, sg, tsegments, silence, main_spk=1):
     """文字起こしの場所に置くタイムライン。別ページは作らない（オーナー指示・2026-08-05）。"""
     idx = sg.get("index")
     s, e = float(sg["start_sec"]), float(sg["end_sec"])
@@ -632,14 +641,22 @@ def timeline_block(idv, sg, tsegments, silence):
             if st is None or en is None or not (s <= st < e):
                 continue
             tok = (w.get("word") or "").strip()
-            if tok:
-                words.append({"t": tok, "s": round(float(st), 3), "e": round(float(en), 3)})
+            if not tok:
+                continue
+            spk = w.get("speaker") or tseg.get("speaker") or ""
+            try:
+                pno = int(str(spk).split("_")[-1])
+            except ValueError:
+                pno = 0
+            words.append({"t": tok, "s": round(float(st), 3),
+                          "e": round(float(en), 3), "p": pno})
     words.sort(key=lambda w: w["s"])
     sil = [[max(a, s), min(b, e)] for a, b in silence if b > s and a < e]
     sil = [[round(a, 3), round(b, 3)] for a, b in sil if b - a > 0.01]
 
     data = json.dumps({"id": idv, "index": idx, "segStart": s, "segEnd": e,
-                       "drops": sg.get("drops") or [], "words": words, "silence": sil},
+                       "drops": sg.get("drops") or [], "words": words, "silence": sil,
+                       "mainSpk": main_spk},
                       ensure_ascii=False).replace("</", "<\\/")
     vad_note = ("青緑＝発話・黄＝VADが検出した無音（黄をダブルクリックでその無音だけ落ちる）"
                 if sil else "VAD 未実行のため無音の塗り分けなし（python scripts/detect_vad.py &lt;ID&gt;）")
@@ -756,6 +773,22 @@ def _load_json(path, default):
         return default
 
 
+def _main_speaker(tr):
+    """最多話者の番号を返す。話者ラベルが無ければ 1 を返す。"""
+    import collections
+    c = collections.Counter()
+    for w in (tr.get("word_segments") or []):
+        spk = w.get("speaker")
+        if spk:
+            c[spk] += 1
+    if not c:
+        return 1
+    try:
+        return int(str(c.most_common(1)[0][0]).split("_")[-1])
+    except ValueError:
+        return 1
+
+
 def list_ids():
     out = []
     if not os.path.isdir(DATA_DIR):
@@ -810,6 +843,9 @@ def load_id_data(idv):
         "ratings_by_index": {r.get("index"): r for r in ratings.get("ratings", [])},
         # VAD の無音区間。バーの中を緑(発話)/黄(無音)で塗り分けるのに使う。
         "silence_spans": [tuple(x) for x in vad.get("silence", [])],
+        # メイン話者＝最多話者（docs/編集規則.md「Speaker 1 = 大塚さん（最多話者）」）。
+        # この話者だけ既定色、他はオレンジ系にして会話相手を見分けられるようにする。
+        "main_speaker": _main_speaker(tr),
     }
 
 
@@ -1301,7 +1337,8 @@ def render_id(idv):
         # 文字起こしの場所はタイムラインにする（オーナー指示・2026-08-05）。
         # 別ページを開かず、この画面で切る。
         parts.append("<div class='transcript'>"
-                     + timeline_block(idv, sg, d["tsegments"], d["silence_spans"]) + "</div>")
+                     + timeline_block(idv, sg, d["tsegments"], d["silence_spans"],
+                                      d["main_speaker"]) + "</div>")
         parts.append("</div>")
 
     return page(f"{idv} 生成物", "".join(parts))
