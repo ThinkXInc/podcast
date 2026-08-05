@@ -177,15 +177,32 @@ TIMELINE_CSS = """
        font-variant-numeric:tabular-nums; white-space:nowrap; }
 .w { position:absolute; top:16px; white-space:pre; font-size:14px; line-height:20px;
      cursor:pointer; border-radius:2px; }
-.w.cut { color:#8a8a8a; }
+.w.cut { color:#6d6d6d; }
 /* 話者の色分け。メイン話者（最多話者＝大塚さん）は既定色のまま、
    会話相手はモックの赤系に寄せたオレンジ系にする。docs/編集規則.md の
    「Speaker1 はほぼそのまま／会話相手は基本カット」を目で見て分けられるようにする。 */
 .w.s2 { color:#d97a2b; } .w.s3 { color:#c9603a; } .w.s4 { color:#b8813a; }
 .w.s5 { color:#d4643a; } .w.s6 { color:#c08a3f; } .w.s7 { color:#e0863c; }
 .w.s8 { color:#b06a45; } .w.sx { color:#c9773a; }
-/* カット済みはグレーが優先（話者色より上書き） */
-.w.cut.s2,.w.cut.s3,.w.cut.s4,.w.cut.s5,.w.cut.s6,.w.cut.s7,.w.cut.s8,.w.cut.sx { color:#8a8a8a; }
+/* カット済みでも話者の色は保つ。ただし沈める。
+   一律グレーにすると「話者が違うから切った」のか「内容で切った」のかが分からなくなる。 */
+.w.cut.s2 { color:#8a5a2e; } .w.cut.s3 { color:#84462c; } .w.cut.s4 { color:#7a562c; }
+.w.cut.s5 { color:#8a4a2e; } .w.cut.s6 { color:#7d5c2e; } .w.cut.s7 { color:#91582a; }
+.w.cut.s8 { color:#754b33; } .w.cut.sx { color:#815129; }
+:root[data-theme="light"] .w.cut { color:#c4c4c4; }
+:root[data-theme="light"] .w.cut.s2 { color:#f0c79b; }
+:root[data-theme="light"] .w.cut.s3 { color:#eeb9a2; }
+:root[data-theme="light"] .w.cut.s4 { color:#e8cda0; }
+:root[data-theme="light"] .w.cut.s5 { color:#f2bda6; }
+:root[data-theme="light"] .w.cut.s6 { color:#ead3a4; }
+:root[data-theme="light"] .w.cut.s7 { color:#f5cba3; }
+:root[data-theme="light"] .w.cut.s8 { color:#e3c3ae; }
+:root[data-theme="light"] .w.cut.sx { color:#eec9a4; }
+/* 話者ラベル。会話相手のターンの頭に小さく出す */
+.spk { position:absolute; top:0; font-size:10px; font-weight:700; white-space:nowrap; }
+.spk.s2 { color:#d97a2b; } .spk.s3 { color:#c9603a; } .spk.s4 { color:#b8813a; }
+.spk.s5 { color:#d4643a; } .spk.s6 { color:#c08a3f; } .spk.s7 { color:#e0863c; }
+.spk.s8 { color:#b06a45; } .spk.sx { color:#c9773a; }
 .w.playing { background:#2563eb33; }
 /* バーは常に1本の連続した帯。カットしても消さず、黒く塗る（AfterEffects と同じ見え方）。
    青緑＝発話 / 黄＝VADが検出した無音 / 黒＝カット済み。 */
@@ -280,26 +297,35 @@ function makeTimeline(root){
       var row=document.createElement('div'); row.className='row';
       var lane=document.createElement('div'); lane.className='lane'; row.appendChild(lane);
       var strip=document.createElement('div'); strip.className='strip'; lane.appendChild(strip);
-      var lastRight=-1e9, lastTsRight=-1e9, els=[], prevEnd=null;
+      var lastRight=-1e9, lastTsRight=-1e9, els=[], prevEnd=null, prevSpk=null;
       while(wi<D.words.length && D.words[wi].s < t1){
         var w=D.words[wi];
         if(w.e<=t0){ wi++; continue; }
         var x=(w.s-t0)*pxPerSec;
         if(x<lastRight) x=lastRight;
-        /* 発話ブロックの頭にタイムスタンプを出す（前の語から0.8秒以上空いたら新ブロック） */
-        if(prevEnd===null || w.s-prevEnd>=0.8){
-          if(x>=lastTsRight){
-            var ts=document.createElement('div'); ts.className='ts2';
-            ts.textContent=fmtAbs(w.s); ts.style.left=x+'px';
-            lane.appendChild(ts); lastTsRight=x+ts.offsetWidth+8;
-          }
+        /* 上の行に、発話ブロックの頭ならタイムスタンプ、
+           会話相手のターンが始まったら「Speaker N」を出す。
+           同じ位置に両方来ることがあるので、置いた幅を覚えて重なりを避ける。 */
+        var newBlock=(prevEnd===null || w.s-prevEnd>=0.8);
+        var newSpk=(w.p!==prevSpk);
+        if(newBlock && x>=lastTsRight){
+          var ts=document.createElement('div'); ts.className='ts2';
+          ts.textContent=fmtAbs(w.s); ts.style.left=x+'px';
+          lane.appendChild(ts); lastTsRight=x+ts.offsetWidth+8;
+        }
+        if(newSpk && w.p && w.p!==D.mainSpk){
+          var sc=' s'+(w.p<=8?w.p:'x');
+          var sl=document.createElement('div'); sl.className='spk'+sc;
+          sl.textContent='Speaker '+w.p;
+          sl.style.left=Math.max(x,lastTsRight)+'px';
+          lane.appendChild(sl); lastTsRight=Math.max(x,lastTsRight)+sl.offsetWidth+8;
         }
         var el=document.createElement('span');
         el.className='w'+((w.p&&w.p!==D.mainSpk)?(' s'+(w.p<=8?w.p:'x')):'');
         el.textContent=w.t; el.style.left=x+'px';
         el.dataset.s=w.s; el.dataset.e=w.e;
         lane.appendChild(el); els.push(el);
-        lastRight=x+el.offsetWidth; prevEnd=w.e; wi++;
+        lastRight=x+el.offsetWidth; prevEnd=w.e; prevSpk=w.p; wi++;
       }
       host.appendChild(row);
       var R={t0:t0,t1:t1,strip:strip,els:els,bars:[]};
@@ -462,9 +488,24 @@ function makeTimeline(root){
       var nk=keeps.find(function(k){return k[0]>=playhead;});
       playhead=nk?nk[0]:(keeps[0]?keeps[0][0]:D.segStart);
     }
-    audio.currentTime=playhead;
-    audio.play().then(function(){ active=api; if(elBtn) elBtn.textContent='∎ 停止';
-      requestAnimationFrame(tick); }).catch(function(){ setStatus('再生できません'); });
+    var go=function(){
+      try{ audio.currentTime=playhead; }
+      catch(err){ setStatus('シークできません: '+err.name); return; }
+      audio.play().then(function(){ active=api; if(elBtn) elBtn.textContent='∎ 停止';
+        setStatus('再生中'); requestAnimationFrame(tick); })
+        .catch(function(err){ setStatus('再生できません: '+err.name+' '+(err.message||'')); });
+    };
+    /* preload=metadata でも読み終わる前に currentTime を触ると失敗するので待つ */
+    if(audio.readyState>=1){ go(); }
+    else{
+      setStatus('音源を読み込み中…');
+      audio.addEventListener('loadedmetadata', go, {once:true});
+      audio.addEventListener('error', function(){
+        var c=audio.error&&audio.error.code;
+        setStatus('音源を読み込めません（code '+c+'）。ブラウザが対応しない形式かもしれません');
+      }, {once:true});
+      audio.load();
+    }
   }
   function stop(){
     if(audio) audio.pause();
@@ -1226,11 +1267,14 @@ def render_id(idv):
         f"<h1>{esc(idv)}　生成物</h1>",
     ]
     # 元音源（無編集）。カット済み区間のクリック時にここから再生して内容を確認できるようにする
-    src_name = next((n for n in sorted(os.listdir(os.path.join(DATA_DIR, idv)))
-                     if n.lower().endswith(".m4a")), None)
+    # 再生用は preview_audio.m4a を最優先。元音源が ALAC だと Chrome / Firefox が
+    # 再生できないため（2026-08-05 実測）。作り方: python scripts/make_preview_audio.py <ID>
+    names = sorted(os.listdir(os.path.join(DATA_DIR, idv)))
+    src_name = "preview_audio.m4a" if "preview_audio.m4a" in names else None
     if not src_name:
-        src_name = next((n for n in sorted(os.listdir(os.path.join(DATA_DIR, idv)))
-                         if n.lower().endswith(".mp4")), None)
+        src_name = next((n for n in names if n.lower().endswith(".m4a")), None)
+    if not src_name:
+        src_name = next((n for n in names if n.lower().endswith(".mp4")), None)
     if src_name:
         # preload='none' だと尺が分からずシークできない。タイムラインは 800秒などの
         # 絶対時刻へ飛ぶので metadata まで読ませる。

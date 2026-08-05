@@ -282,5 +282,9 @@ open(dst,"w",encoding="utf-8").write("\n".join(lines)+"\n")
 print(f"[transcribe] transcript.txt: {len(lines)} 行")
 PY
 
+# ブラウザ再生用の音源を用意する。元が ALAC だと Chrome / Firefox で鳴らないため。
+# 元音源には手を触れず、AAC のコピーを別ファイルで作る（既にあれば何もしない）。
+"$VENV/bin/python3" "$HERE/scripts/make_preview_audio.py" "$ID" || true
+
 echo "[transcribe] 完了 -> $OUT/transcript.json (字幕の元データ) , transcript.txt"
 echo "[transcribe] 次: suggest.py で候補生成 → 確定 segments.json → render.py で字幕付き書き出し"
