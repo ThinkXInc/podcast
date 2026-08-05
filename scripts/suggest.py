@@ -97,7 +97,11 @@ def main():
     else:
         # --- APIモード ---
         from openai import OpenAI
-        client = OpenAI()
+        # gpt-5.5-pro を reasoning=high で 8万字超に対して回すと、openai SDK の既定
+        # タイムアウト(600秒)を超えて APITimeoutError で落ちる（2026-08-05 実測）。
+        # 文字起こしにリアルタイム性は不要なので、余裕を持って1時間にする。
+        client = OpenAI(timeout=float(os.environ.get("PODCAST_API_TIMEOUT", "3600")),
+                        max_retries=1)
         print(f"[suggest] APIモード: {MODEL} を1回呼び出します（effort={EFFORT}）。")
         print("[suggest]   ※ gpt-5.5-pro は応答に数分かかることがあります。")
         print("[suggest]   ※ 料金を避けたい場合は、prompts/prompt_all.txt と transcript.txt を")
