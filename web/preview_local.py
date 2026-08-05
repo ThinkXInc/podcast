@@ -60,8 +60,18 @@ a { color: #2563eb; text-decoration: none; } a:hover { text-decoration: underlin
 :root[data-theme="light"] .ann-donespk { color:#c2c2c2; }
 :root[data-theme="light"] .ann-keep { color:#b8b8b8; }
 :root[data-theme="light"] .trim.done { color:#c8c8c8; }
-ul.ids { list-style: none; padding: 0; }
-ul.ids li { padding: 9px 0; border-bottom: 1px solid #ccc4; }
+ul.ids { list-style: none; padding: 0; max-width: 620px; }
+ul.ids li { display:flex; align-items:center; gap:14px;
+            padding: 11px 0; border-bottom: 1px solid #ccc4; }
+ul.ids li a { flex:1; color: inherit; font-size: 16px; }
+ul.ids li a:hover { text-decoration: underline; }
+/* 進み具合。白抜きで、落ち着いた色。タイムラインの配色と揃える */
+.st { flex:none; font-size: 11px; font-weight: 700; color: #fff;
+      padding: 3px 11px; border-radius: 11px; letter-spacing: .04em; }
+.st-none  { background: #6b7280; }   /* 未処理  グレー */
+.st-done0 { background: #5f8a9c; }   /* 処理済み 青緑（タイムラインの発話色） */
+.st-wip   { background: #a08040; }   /* 編集中  黄土（タイムラインの無音色） */
+.st-done  { background: #4a7c59; }   /* 編集済み 緑 */
 
 .seg { border: 1px solid #ccc4; border-radius: 12px; padding: 16px 19px 21px;
        margin-bottom: 35px; }
@@ -976,13 +986,40 @@ def _main_speaker(tr):
 
 
 def list_ids():
+    """data/ 直下の ID をすべて返す（未処理のものも含める）。"""
     out = []
     if not os.path.isdir(DATA_DIR):
         return out
     for name in sorted(os.listdir(DATA_DIR)):
-        if os.path.isdir(os.path.join(DATA_DIR, name, "contents")):
+        if name.startswith(".") or name.startswith("_"):
+            continue
+        if os.path.isdir(os.path.join(DATA_DIR, name)):
             out.append(name)
     return out
+
+
+def id_status(idv):
+    """ID の進み具合を返す (key, ラベル)。
+    未処理   … 文字起こしがまだ
+    処理済み … 文字起こしはできたが、まだ何も編集していない
+    編集中   … カットを入れたが、未決のカット候補が残っている
+    編集済み … 未決がなくなった
+    """
+    base = os.path.join(DATA_DIR, idv)
+    if not os.path.exists(idpaths.find(base, "transcript.json")):
+        return "none", "未処理"
+    segs = _load_json(idpaths.find(base, "segments.json"), {}).get("segments", [])
+    cuts = _load_json(idpaths.find(base, "cut_decisions.json"), {}).get("cuts", [])
+    pending = sum(1 for c in cuts if c.get("status") == "pending")
+    decided = sum(1 for c in cuts if c.get("status") in ("cut", "keep"))
+    has_drop = any(sg.get("drops") for sg in segs)
+    if not segs:
+        return "done0", "処理済み"
+    if pending:
+        return "wip", "編集中"
+    if decided or has_drop:
+        return "done", "編集済み"
+    return "done0", "処理済み"
 
 
 def list_segments(idv):
@@ -1386,18 +1423,15 @@ def render_transcript(tsegments, s, e, regions, quotes, gaps, drops=None, vid_id
 # ---------- ページ描画 ----------
 def render_index():
     ids = list_ids()
-    if ids:
-        items = "".join(
-            f"<li><a href='/id?id={urllib.parse.quote(i)}'>{esc(i)}</a> "
-            f"<span class='meta'>{len(list_segments(i))} セグメント</span></li>"
-            for i in ids
-        )
-        body = f"<h1>生成物チェック (ローカル preview)</h1><ul class='ids'>{items}</ul>"
-    else:
-        body = ("<h1>生成物チェック (ローカル preview)</h1>"
-                f"<p class='meta'>contents/ を持つ ID が見つかりません。<br>data: {esc(DATA_DIR)}</p>")
-    body += f"<p class='meta'>data: {esc(DATA_DIR)}</p>"
-    return page("生成物チェック (ローカル preview)", body)
+    if not ids:
+        return page("音源一覧", f"<h1>音源一覧</h1><p class='meta'>data: {esc(DATA_DIR)}</p>")
+    rows = []
+    for i in ids:
+        key, label = id_status(i)
+        rows.append(
+            f"<li><a href='/id?id={urllib.parse.quote(i)}'>{esc(i)}</a>"
+            f"<span class='st st-{key}'>{label}</span></li>")
+    return page("音源一覧", f"<h1>音源一覧</h1><ul class='ids'>{''.join(rows)}</ul>")
 
 
 
@@ -1409,8 +1443,19 @@ def render_id(idv):
     segments = d["segments"]
     parts = [
         "<div class='crumb'><a href='/'>← 一覧</a></div>",
-        f"<h1>{esc(idv)}　生成物</h1>",
+        f"<h1>{esc(idv)}</h1>",
     ]
+    if not segments:
+        # まだ処理していない ID。何が足りないかだけ出す
+        base = os.path.join(DATA_DIR, idv)
+        has_tr = os.path.exists(idpaths.find(base, "transcript.json"))
+        parts.append(
+            "<p class='meta'>"
+            + ("切り出し区間がまだありません（segments.json 未作成）。"
+               if has_tr else
+               "文字起こしがまだです。<br>bash scripts/transcribe.sh " + esc(idv))
+            + "</p>")
+        return page(idv, "".join(parts))
     # 元音源（無編集）。カット済み区間のクリック時にここから再生して内容を確認できるようにする
     # 再生用は preview_audio.m4a を最優先。元音源が ALAC だと Chrome / Firefox が
     # 再生できないため（2026-08-05 実測）。作り方: python scripts/make_preview_audio.py <ID>
