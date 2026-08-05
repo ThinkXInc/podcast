@@ -186,7 +186,12 @@ TIMELINE_CSS = """
 .sil { position:absolute; top:0; height:16px; background:#a89a3c; }
 .cutz { position:absolute; top:0; height:16px; background:#2e2e2e; }
 /* ドラッグ中の端は印として明示する（AfterEffects と同様） */
-.splitline { position:absolute; top:-3px; height:22px; width:2px; background:#e8e8e8; }
+.splitline { position:absolute; top:-3px; height:22px; width:12px; pointer-events:none; }
+.splitline::before, .splitline::after {
+  content:''; position:absolute; top:0; bottom:0; width:4px;
+  border-top:2px solid #e8e8e8; border-bottom:2px solid #e8e8e8; }
+.splitline::before { left:0;  border-right:2px solid #e8e8e8; }   /* ] 左クリップの終端 */
+.splitline::after  { right:0; border-left:2px solid #e8e8e8; }    /* [ 右クリップの始端 */
 .edge { position:absolute; top:-2px; height:20px; width:2px; background:#e8e8e8; opacity:0; }
 .edge.on { opacity:1; }
 .hoverline { position:absolute; top:-26px; bottom:-2px; width:1px; background:#9ca3af;
@@ -329,7 +334,7 @@ function makeTimeline(root){
         var bt=ks[i2][1];
         if(bt<R.t0||bt>R.t1) continue;
         var sp2=document.createElement('div'); sp2.className='splitline';
-        sp2.style.left=(X(R,bt)-1)+'px'; R.strip.appendChild(sp2);
+        sp2.style.left=(X(R,bt)-6)+'px'; R.strip.appendChild(sp2);
       }
       /* 5) ドラッグできる端（keeps の境界）を記録。選択中は枠で示す */
       ks.forEach(function(k){
