@@ -51,11 +51,21 @@ def hms(s):
 
 
 def find_transcript_pdf(outdir):
+    """土台にする全文PDFを選ぶ。
+    D-015 で本文は Whisper を正としたので、Whisper から組んだ <ID>_全文.pdf を最優先する。
+    引用文もカット区間も Whisper 由来になるため、土台が Notta のままだと本文が食い違い、
+    search_for() の完全一致も、時刻索引の位置も合わなくなる。
+    無ければ従来どおり Notta の *transcript*.pdf にフォールバックする。"""
+    gen = outdir / f"{outdir.name}_全文.pdf"
+    if gen.exists():
+        return gen
     cands = [p for p in outdir.glob("*.pdf")
              if "transcript" in p.name.lower() and "校正" not in p.name]
     if not cands:
         raise FileNotFoundError(
-            f"{outdir} に全文PDF（ファイル名に 'transcript' を含む .pdf）が見つかりません")
+            f"{outdir} に全文PDF が見つかりません。"
+            f" python scripts/make_transcript_pdf.py {outdir.name} で生成できます"
+            f"（または Notta の *transcript*.pdf を置いてください）")
     return sorted(cands, key=lambda p: -p.stat().st_size)[0]
 
 
