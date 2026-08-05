@@ -72,8 +72,21 @@ source "$VENV/bin/activate"
 
 MODEL="${WHISPER_MODEL:-large-v3}"
 DEVICE="${WHISPER_DEVICE:-cpu}"
-COMPUTE="${WHISPER_COMPUTE:-int8}"
+COMPUTE="${WHISPER_COMPUTE:-float32}"   # 精度優先（int8 は量子化で精度が落ちる）
 LANG="${WHISPER_LANG:-ja}"
+
+# ASRエンジン: mlx (Apple Silicon ネイティブ・Metal GPU・fp16。精度/速度とも上) / whisperx (旧・CTranslate2 cpu+int8)
+# arm64 の既定は mlx。config/paths.conf の WHISPER_ENGINE で切替可。
+if [ "$(uname -m)" = "arm64" ]; then
+  ENGINE="${WHISPER_ENGINE:-mlx}"
+else
+  ENGINE="${WHISPER_ENGINE:-whisperx}"
+fi
+MLX_MODEL="${WHISPER_MLX_MODEL:-mlx-community/whisper-large-v3-mlx}"
+if [ "$ENGINE" = "mlx" ] && ! "$VENV/bin/python3" -c 'import mlx_whisper' 2>/dev/null; then
+  echo "[transcribe] mlx_whisper が venv にありません。pip install mlx-whisper するか WHISPER_ENGINE=whisperx を指定してください。"
+  exit 1
+fi
 
 CHUNK_SEC="${WHISPER_CHUNK_SEC:-720}"
 CHUNK_OVERLAP="${WHISPER_CHUNK_OVERLAP:-6}"
@@ -85,7 +98,11 @@ DUR="$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappe
 WORK="$OUT/.chunks"
 rm -rf "$WORK"; mkdir -p "$WORK"
 
-echo "[transcribe] WhisperX $MODEL ($DEVICE/$COMPUTE) 分割文字起こし: 全長 ${DUR}s / チャンク ${CHUNK_SEC}s（重なり ${CHUNK_OVERLAP}s）"
+if [ "$ENGINE" = "mlx" ]; then
+  echo "[transcribe] mlx-whisper $MLX_MODEL (Metal/fp16) 分割文字起こし: 全長 ${DUR}s / チャンク ${CHUNK_SEC}s（重なり ${CHUNK_OVERLAP}s）"
+else
+  echo "[transcribe] WhisperX $MODEL ($DEVICE/$COMPUTE) 分割文字起こし: 全長 ${DUR}s / チャンク ${CHUNK_SEC}s（重なり ${CHUNK_OVERLAP}s）"
+fi
 
 # チャンク境界を作る（オーバーラップ付き）。各行: index start_sec end_sec
 # ※ mapfile は bash4+ 専用で macOS の bash 3.2 に無いため使わない。while read で回す。
@@ -114,9 +131,18 @@ while read -r ci cstart cend; do
          -ac 1 -ar 16000 "$cfile" </dev/null
   # 文字起こし（このチャンク専用の出力先）
   cdir="$WORK/out_${ci}"; mkdir -p "$cdir"
-  whisperx "$cfile" \
-    --model "$MODEL" --device "$DEVICE" --compute_type "$COMPUTE" \
-    --language "$LANG" --output_dir "$cdir" --output_format json </dev/null
+  if [ "$ENGINE" = "mlx" ]; then
+    # mlx-whisper: openai-whisper 互換の JSON（segments[].words に word/start/end）。
+    # マージ側は word_segments が無ければ segments[].words を拾うのでスキーマ互換。
+    "$VENV/bin/mlx_whisper" "$cfile" \
+      --model "$MLX_MODEL" --language "$LANG" --task transcribe \
+      --word-timestamps True --verbose False \
+      --output-dir "$cdir" --output-format json </dev/null
+  else
+    whisperx "$cfile" \
+      --model "$MODEL" --device "$DEVICE" --compute_type "$COMPUTE" \
+      --language "$LANG" --output_dir "$cdir" --output_format json </dev/null
+  fi
   # このチャンクの絶対開始秒を記録（マージ時のオフセット）
   echo "$cstart" > "$cdir/.offset"
 done < "$_chunks_file"
