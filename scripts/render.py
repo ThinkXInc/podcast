@@ -30,6 +30,22 @@ WhisperX の transcript.json（単語タイムスタンプ）から その区間
 import os, sys, json, subprocess, pathlib, re, glob
 
 HERE = pathlib.Path(__file__).resolve().parents[1]
+import sys as _sys
+_sys.path.insert(0, str(HERE / "scripts"))
+import idpaths  # data/<ID>/ のファイル配置は idpaths が唯一の定義（D-002 改定）
+
+
+def P(outdir, name):
+    """読み書き両用のパス解決。読むときは新旧どちらでも見つかる。"""
+    import pathlib
+    return pathlib.Path(idpaths.find(str(outdir), name))
+
+
+def PW(outdir, name):
+    import pathlib
+    return pathlib.Path(idpaths.save(str(outdir), name))
+
+
 MEDIA_EXT = (".m4a", ".mp3", ".wav", ".aac", ".mp4", ".mov", ".m4v")
 
 
@@ -114,7 +130,7 @@ def has_video(media):
 
 def load_words(outdir):
     """WhisperX transcript.json から単語リスト [{word,start,end}] を取り出す。無ければ []。"""
-    tp = outdir / "transcript.json"
+    tp = P(outdir, "transcript.json")
     if not tp.exists():
         return []
     data = json.loads(tp.read_text(encoding="utf-8"))
@@ -208,7 +224,7 @@ def main():
     root = paths.get("PODCAST_ROOT") or paths.get("WORKROOT") or str(HERE / "data")
     outdir = pathlib.Path(root) / ID
 
-    seg_path = outdir / "segments.json"
+    seg_path = P(outdir, "segments.json")
     if not seg_path.exists():
         print(f"[render] {seg_path} が無い。チャットで切り出しを確定し segments.json を書いてから実行する。")
         sys.exit(1)

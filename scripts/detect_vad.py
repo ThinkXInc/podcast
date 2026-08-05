@@ -27,6 +27,9 @@ import argparse
 import warnings
 
 warnings.filterwarnings("ignore")
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import idpaths  # data/<ID>/ のファイル配置は idpaths が唯一の定義（D-002 改定）
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # 発話区間の後処理。VAD の生出力は細切れになるので、実用的な粒度に均す。
@@ -114,7 +117,7 @@ def main():
         print(f"[vad] data/{args.id} に音源が見つかりません")
         return 1
 
-    wav = os.path.join(base, ".vad_audio.wav")
+    wav = idpaths.save(base, ".vad_audio.wav")
     if not os.path.exists(wav):
         print("[vad] 16k mono wav を抽出中…")
         to_wav(media, wav)
@@ -156,7 +159,7 @@ def main():
            "params": {"merge_gap": MERGE_GAP, "min_speech": MIN_SPEECH,
                       "min_silence": MIN_SILENCE},
            "speech": [list(x) for x in spans], "silence": [list(x) for x in sil]}
-    dst = os.path.join(base, "vad.json")
+    dst = idpaths.save(base, "vad.json")
     json.dump(out, open(dst, "w", encoding="utf-8"), ensure_ascii=False)
     print(f"[vad] モデル={used} / 全長{dur:.0f}s")
     print(f"[vad] 発話 {len(spans)} 区間 / 計 {speech:.0f}s ({100*speech/dur:.1f}%)")

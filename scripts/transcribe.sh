@@ -109,7 +109,7 @@ CHUNK_OVERLAP="${WHISPER_CHUNK_OVERLAP:-6}"
 # （また zsh 由来のシェルでは常に）1引数に潰れて argparse に弾かれる。
 # 展開側は ${ARR[@]+"${ARR[@]}"} と書く。macOS の bash 3.2 は set -u のもとで
 # 空配列の "${ARR[@]}" を unbound variable として落とすため（bash 4.4 以降は問題ない）。
-PROMPT_FILE="$OUT/asr_prompt.txt"
+PROMPT_FILE="$OUT/generated/asr_prompt.txt"
 PROMPT_ARGS=()
 if [ "${WHISPER_PROMPT:-0}" = "1" ] && [ -s "$PROMPT_FILE" ]; then
   PROMPT_ARGS=(--prompt "$PROMPT_FILE")
@@ -120,7 +120,8 @@ fi
 DUR="$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$MEDIA" | cut -d. -f1)"
 [ -n "$DUR" ] || { echo "[transcribe] 長さ取得に失敗"; exit 1; }
 
-WORK="$OUT/.chunks"
+mkdir -p "$OUT/generated"
+WORK="$OUT/generated/.chunks"
 rm -rf "$WORK"; mkdir -p "$WORK"
 
 if [ "$ENGINE" = "mlx" ]; then
@@ -176,7 +177,7 @@ done < "$_chunks_file"
 rm -f "$_chunks_file"
 
 # 全チャンクJSONをオフセット補正してマージ → transcript.json
-python3 - "$WORK" "$OUT/transcript.json" "$CHUNK_OVERLAP" <<'PY'
+python3 - "$WORK" "$OUT/generated/transcript.json" "$CHUNK_OVERLAP" <<'PY'
 import json, sys, pathlib, glob
 work=pathlib.Path(sys.argv[1]); dst=sys.argv[2]; ov=float(sys.argv[3])
 
@@ -261,7 +262,7 @@ if [ "${KEEP_CHUNKS:-0}" != "1" ]; then
   rm -rf "$WORK"
 fi
 # プレーン全文（segments のテキストを連結）
-python3 - "$OUT/transcript.json" "$OUT/transcript.txt" <<'PY'
+python3 - "$OUT/generated/transcript.json" "$OUT/generated/transcript.txt" <<'PY'
 import json, sys
 src, dst = sys.argv[1], sys.argv[2]
 try:

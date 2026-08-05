@@ -19,6 +19,9 @@ import sys
 import json
 import subprocess
 
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import idpaths  # data/<ID>/ のファイル配置は idpaths が唯一の定義（D-002 改定）
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ブラウザが概ね再生できるコーデック。これ以外なら変換する。
 BROWSER_OK = {"aac", "mp3", "opus", "vorbis", "flac", "pcm_s16le"}
@@ -66,7 +69,7 @@ def main():
         print("[preview音源] ブラウザで再生できる形式なので変換しません")
         return 0
 
-    dst = os.path.join(base, OUT_NAME)
+    dst = idpaths.save(base, OUT_NAME)
     if os.path.exists(dst) and not force:
         print(f"[preview音源] 既にあります: {OUT_NAME}（作り直すなら --force）")
         return 0

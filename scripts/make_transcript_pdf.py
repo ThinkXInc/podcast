@@ -20,6 +20,9 @@ import os
 import sys
 import json
 
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import idpaths  # data/<ID>/ のファイル配置は idpaths が唯一の定義（D-002 改定）
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 PAGE_W, PAGE_H = 595.92, 841.92        # A4（Notta PDF と同じ）
@@ -78,7 +81,7 @@ def main():
         return 1
     idv = sys.argv[1]
     base = os.path.join(HERE, "data", idv)
-    tpath = os.path.join(base, "transcript.json")
+    tpath = idpaths.find(base, "transcript.json")
     if not os.path.isfile(tpath):
         print(f"[全文PDF] {tpath} がありません。先に transcribe.sh を実行してください。")
         return 1
@@ -151,8 +154,8 @@ def main():
 
     tw.write_text(page)
 
-    out_pdf = os.path.join(base, f"{idv}_全文.pdf")
-    out_map = os.path.join(base, "transcript_pdf_map.json")
+    out_pdf = idpaths.save(base, f"{idv}_全文.pdf")
+    out_map = idpaths.save(base, "transcript_pdf_map.json")
     npages = doc.page_count
     doc.save(out_pdf, deflate=True)
     doc.close()

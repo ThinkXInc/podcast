@@ -27,6 +27,9 @@ import glob
 import shutil
 import collections
 
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import idpaths  # data/<ID>/ のファイル配置は idpaths が唯一の定義（D-002 改定）
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BLOCK_RE = re.compile(
     r"(\d{2}):(\d{2}):(\d{2})\s+Speaker\s+(\d+)\s*\n(.*?)(?=\n\d{2}:\d{2}:\d{2}\s+Speaker|\Z)",
@@ -79,7 +82,7 @@ def main():
     idv = sys.argv[1]
     dry = "--dry-run" in sys.argv
     base = os.path.join(HERE, "data", idv)
-    tpath = os.path.join(base, "transcript.json")
+    tpath = idpaths.find(base, "transcript.json")
     if not os.path.isfile(tpath):
         print(f"[speaker] {tpath} がありません。先に transcribe.sh を実行してください。")
         return 1
@@ -137,7 +140,7 @@ def main():
     if not os.path.exists(bpath):
         shutil.copy2(tpath, bpath)
         print(f"[speaker] 退避: backup/transcript_nospeaker.json")
-    with open(tpath, "w", encoding="utf-8") as f:
+    with open(idpaths.save(base, "transcript.json"), "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
     print(f"[speaker] 完了 -> {tpath}")
     return 0

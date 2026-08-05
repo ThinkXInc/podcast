@@ -62,20 +62,20 @@ def main(idv):
         if r and r not in m["reasons"]:
             m["reasons"].append(r)
 
-    for c in _load(base / "candidates_raw.json", []):
+    for c in _load(P(base, "candidates_raw.json"), []):
         for cut in c.get("cuts") or []:
             add(cut.get("start_sec"), cut.get("end_sec"),
                 cut.get("reason"), cut.get("quote"))
-    for ez in _load(base / "exclude_zones.json", {}).get("exclude_zones", []):
+    for ez in _load(P(base, "exclude_zones.json"), {}).get("exclude_zones", []):
         add(ez.get("start_sec"), ez.get("end_sec"), ez.get("reason"))
 
-    dec_p = base / "cut_decisions.json"
+    dec_p = PW(base, "cut_decisions.json")
     dec = _load(dec_p, {"source_no": src_no, "cuts": []})
     dec["source_no"] = src_no
     known = {_key(c["start_sec"], c["end_sec"]): c for c in dec["cuts"]}
     nxt = max((int(c["cid"].rsplit("-", 1)[1]) for c in dec["cuts"]), default=0) + 1
 
-    segments = _load(base / "segments.json", {}).get("segments", [])
+    segments = _load(P(base, "segments.json"), {}).get("segments", [])
 
     # 初期状態は全件オープン（勝手にカットしない・D-013）。オーナーがサイトのボタンか
     # チャットで cut/keep を確定するまで pending のまま。
@@ -95,7 +95,7 @@ def main(idv):
 
     # 会話相手（メイン話者 SPEAKER_01 以外）の発言ブロックも未決候補として追加する。
     # 判定は間違うことがあるため、勝手にカットせずオーナーの確定を待つ。
-    tr = _load(base / "transcript.json", {})
+    tr = _load(P(base, "transcript.json"), {})
     spk_added = 0
     for ts in tr.get("segments", []):
         spk = str(ts.get("speaker") or "")

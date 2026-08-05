@@ -21,6 +21,9 @@ from difflib import SequenceMatcher
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+import sys as _sys
+_sys.path.insert(0, os.path.join(os.path.dirname(HERE), "scripts"))
+import idpaths  # data/<ID>/ のファイル配置は idpaths が唯一の定義（D-002 改定）
 DATA_DIR = os.path.realpath(
     os.environ.get("SITE_DATA_DIR") or os.path.join(os.path.dirname(HERE), "data")
 )
@@ -870,7 +873,7 @@ def apply_timeline_save(payload):
     if not idv or "/" in idv or idv.startswith("."):
         return False
     base = os.path.join(DATA_DIR, idv)
-    seg_path = os.path.join(base, "segments.json")
+    seg_path = idpaths.find(base, "segments.json")
     if not os.path.isfile(seg_path):
         return False
     try:
@@ -999,19 +1002,19 @@ def seg_dirname(idv, index, title):
 
 def load_id_data(idv):
     base = os.path.join(DATA_DIR, idv)
-    segments = _load_json(os.path.join(base, "segments.json"), {}).get("segments", [])
-    cands = _load_json(os.path.join(base, "candidates_raw.json"), [])
+    segments = _load_json(idpaths.find(base, "segments.json"), {}).get("segments", [])
+    cands = _load_json(idpaths.find(base, "candidates_raw.json"), [])
     cand_by_title = {c.get("title"): c for c in cands}
-    sil = _load_json(os.path.join(base, "silences.json"), {})
+    sil = _load_json(idpaths.find(base, "silences.json"), {})
     sil_by_index = {s.get("index"): s for s in sil.get("segments", [])}
-    ex = _load_json(os.path.join(base, "exclude_zones.json"), {})
-    tr = _load_json(os.path.join(base, "transcript.json"), {})
+    ex = _load_json(idpaths.find(base, "exclude_zones.json"), {})
+    tr = _load_json(idpaths.find(base, "transcript.json"), {})
     # カット候補リストは ID ごと（data/<ID>/cutlist.json）。CUTLIST 環境変数で上書き可。
-    cutlist_path = os.environ.get("CUTLIST") or os.path.join(base, "cutlist.json")
+    cutlist_path = os.environ.get("CUTLIST") or idpaths.find(base, "cutlist.json")
     cutlist = _load_json(cutlist_path, {"speakers": [], "manual": []})
-    cutdec = _load_json(os.path.join(base, "cut_decisions.json"), {"cuts": []})
-    ratings = _load_json(os.path.join(base, "ratings.json"), {"ratings": []})
-    vad = _load_json(os.path.join(base, "vad.json"), {})
+    cutdec = _load_json(idpaths.find(base, "cut_decisions.json"), {"cuts": []})
+    ratings = _load_json(idpaths.find(base, "ratings.json"), {"ratings": []})
+    vad = _load_json(idpaths.find(base, "vad.json"), {})
     return {
         "segments": segments,
         "cand_by_title": cand_by_title,
@@ -1038,7 +1041,7 @@ def media_url(idv, seg, fname):
 
 def trim_applied(idv, segments):
     base = os.path.join(DATA_DIR, idv)
-    if os.path.isfile(os.path.join(base, "trim_plan.json")):
+    if os.path.isfile(idpaths.find(base, "trim_plan.json")):
         return True
     for sg in segments:
         d = seg_dirname(idv, sg.get("index"), sg.get("title"))
@@ -1411,8 +1414,10 @@ def render_id(idv):
     # 元音源（無編集）。カット済み区間のクリック時にここから再生して内容を確認できるようにする
     # 再生用は preview_audio.m4a を最優先。元音源が ALAC だと Chrome / Firefox が
     # 再生できないため（2026-08-05 実測）。作り方: python scripts/make_preview_audio.py <ID>
-    names = sorted(os.listdir(os.path.join(DATA_DIR, idv)))
-    src_name = "preview_audio.m4a" if "preview_audio.m4a" in names else None
+    _b = os.path.join(DATA_DIR, idv)
+    names = sorted(os.listdir(_b))
+    _pv = idpaths.find(_b, "preview_audio.m4a")
+    src_name = os.path.relpath(_pv, _b) if os.path.exists(_pv) else None
     if not src_name:
         src_name = next((n for n in names if n.lower().endswith(".m4a")), None)
     if not src_name:
@@ -1540,7 +1545,7 @@ def apply_decision(idv, cid, action, status_only=False):
     if idv not in list_ids() or action not in ("cut", "keep"):
         return False
     base = os.path.join(DATA_DIR, idv)
-    dec_path = os.path.join(base, "cut_decisions.json")
+    dec_path = idpaths.find(base, "cut_decisions.json")
     dec = _load_json(dec_path, {"cuts": []})
     target = None
     for c in dec.get("cuts", []):
@@ -1555,7 +1560,7 @@ def apply_decision(idv, cid, action, status_only=False):
         with open(dec_path, "w", encoding="utf-8") as f:
             json.dump(dec, f, ensure_ascii=False, indent=2)
         return True
-    seg_path = os.path.join(base, "segments.json")
+    seg_path = idpaths.find(base, "segments.json")
     seg = _load_json(seg_path, {})
     st, en = float(target["start_sec"]), float(target["end_sec"])
     for sg in seg.get("segments", []):
