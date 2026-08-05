@@ -135,7 +135,9 @@ def main():
         raise RuntimeError("全文PDFからタイムスタンプ行を検出できませんでした。"
                            "形式が想定（HH:MM:SS Speaker N）と異なる可能性があります。")
 
-    cand_path = outdir / "candidates_raw.json"
+    # 比較用: PODCAST_CANDIDATES で候補ファイルを、PODCAST_PDF_SUFFIX で出力名を変えられる。
+    # Claude が出した候補と GPT が出した候補を並べて見比べるために使う。
+    cand_path = outdir / os.environ.get("PODCAST_CANDIDATES", "candidates_raw.json")
     candidates = json.loads(cand_path.read_text(encoding="utf-8")) if cand_path.exists() else []
     seg_path = outdir / "segments.json"
     segments = []
@@ -416,7 +418,8 @@ def main():
     cover = doc.new_page(0, width=PAGE_W, height=h)
     y = 56
     T(cover, 48, y, f"{ID}　校正用", 20, (0, 0, 0)); y += 30
-    T(cover, 48, y, "Notta全文PDFの上に、AIの切り出し案を重ねた校正用です。", 10, (0, 0, 0)); y += 17
+    _who = os.environ.get("PODCAST_PDF_LABEL", "")
+    T(cover, 48, y, f"全文PDFの上に{_who}の切り出し案を重ねた校正用です。", 10, (0, 0, 0)); y += 17
     for txt, col in [("赤＝AI本命候補（区間を薄い帯でハイライト＋▼▲マーカー）", RED),
                      ("橙＝AI補助候補（短尺・番外・細かいもの。左罫線＋▼▲）", ORANGE),
                      ("濃赤＝カット推奨（該当文に下線＋「」、理由を併記）", CUT),
@@ -622,7 +625,7 @@ def main():
             na = nearest(index, a)
             T(doc[na[1]], 47, na[2].y0 - 12, f"✂確定{idx} 除外 {hms(a)}–{hms(b)}", 8, BLUE)
 
-    out_pdf = outdir / f"{ID}_校正用.pdf"
+    out_pdf = outdir / f"{ID}_校正用{os.environ.get('PODCAST_PDF_SUFFIX', '')}.pdf"
     doc.save(str(out_pdf), garbage=4, deflate=True)
     print(f"[review_pdf] 生成: {out_pdf}")
     print(f"[review_pdf] 土台: {src_pdf.name} / 本命{len(mains)} 補助{len(helpers)} 確定{len(segments)} / フォント: {os.path.basename(FONT_FILE) if FONT_FILE else 'builtin'}")
