@@ -195,6 +195,9 @@ TIMELINE_CSS = """
 .tlabel { position:absolute; top:-40px; font-size:10px; color:#9ca3af; display:none;
           pointer-events:none; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .tlwait { color:#6b7280; font-size:12px; padding:12px 0; }
+/* いまキー操作の対象になっているタイムライン。Space がどれに効くかを示す */
+.tl { border-left:3px solid transparent; padding-left:9px; margin-left:-12px; }
+.tl.tlfocus { border-left-color:#2563eb; }
 """
 
 TIMELINE_JS = r"""
@@ -543,7 +546,22 @@ function makeTimeline(root){
 }
 
 var focused=null;
-function selectInst(a){ focused=a; }
+function selectInst(a){
+  focused=a;
+  insts.forEach(function(x){ x.root.classList.toggle('tlfocus', x===a); });
+}
+/* クリックしていなくても Space が効くように、画面の中央に一番近いものを対象にする。
+   これが無いと focused も active も null のままで、キーが素通りしていた。 */
+function pickVisible(){
+  var cy=window.innerHeight/2, best=null, bd=1e9;
+  insts.forEach(function(a){
+    var r=a.root.getBoundingClientRect();
+    if(r.bottom<0||r.top>window.innerHeight) return;
+    var d=Math.abs((r.top+r.bottom)/2-cy);
+    if(d<bd){ bd=d; best=a; }
+  });
+  return best;
+}
 function setZoomAll(v){
   pxPerSec=Math.max(20,Math.min(600,v));
   localStorage.setItem('tl_pps',pxPerSec);
@@ -552,7 +570,10 @@ function setZoomAll(v){
 
 document.addEventListener('keydown',function(e){
   if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA') return;
-  var a=focused||active; if(!a) return;
+  var a=active||focused||pickVisible();
+  if(!a){ return; }
+  if(a!==focused) selectInst(a);
+  if(!a.isBuilt()) a.build();
   if(e.code==='Space'){ e.preventDefault(); (active===a)?a.stop():a.play(); }
   else if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='d'){ e.preventDefault(); a.splitAt(); }
   else if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='z'){ e.preventDefault(); e.shiftKey?a.redo():a.undo(); }
@@ -1156,8 +1177,10 @@ def render_id(idv):
         src_name = next((n for n in sorted(os.listdir(os.path.join(DATA_DIR, idv)))
                          if n.lower().endswith(".mp4")), None)
     if src_name:
+        # preload='none' だと尺が分からずシークできない。タイムラインは 800秒などの
+        # 絶対時刻へ飛ぶので metadata まで読ませる。
         parts.append(f"<audio id='orig' src='/media?p={urllib.parse.quote(idv + '/' + src_name)}'"
-                     " preload='none' style='display:none'></audio>")
+                     " preload='metadata' style='display:none'></audio>")
     # 並び順: オーナー評価の★が高い順。未評価は★1.5相当（★2以上の下・★0〜1の上）。同順位は index 順。
     def seg_order(sg):
         rt = d["ratings_by_index"].get(sg.get("index"))
