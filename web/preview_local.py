@@ -171,7 +171,7 @@ TIMELINE_CSS = """
 .tlhelp { font-size:11px; color:#6b7280; line-height:1.8; margin:0 0 8px; }
 
 .row { position:relative; margin:0 0 10px; }
-.lane { position:relative; height:56px; }
+.lane { position:relative; height:76px; }
 /* 上から: タイムスタンプ / 発話テキスト / バー。すべて同じ時間軸の x 座標に置く。 */
 .ts2 { position:absolute; top:0; font-size:11px; color:#8a8a8a;
        font-variant-numeric:tabular-nums; white-space:nowrap; }
@@ -226,6 +226,28 @@ TIMELINE_CSS = """
 .tlabel { position:absolute; top:-40px; font-size:10px; color:#9ca3af; display:none;
           pointer-events:none; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .tlwait { color:#6b7280; font-size:12px; padding:12px 0; }
+/* 象徴的セリフ（highlight_quotes）は色を付けず太字にする（D-008 モノトーン方針） */
+.w.hl { font-weight:700; }
+/* 未決のカット候補。バーの直下に細い帯で出す。分類色は D-013 準拠 */
+.pend { position:absolute; top:58px; height:5px; cursor:pointer; border-radius:2px; }
+.pend.gpt { background:#e7a7bc; } .pend.speaker { background:#30d8ff; }
+.pend.fact { background:#c9eb00; } .pend.other { background:#cdb4e2; }
+.pend:hover { filter:brightness(1.25); }
+.pcid { position:absolute; top:64px; font-size:10px; font-weight:700; white-space:nowrap;
+        pointer-events:none; }
+.pcid.gpt { color:#e7a7bc; } .pcid.speaker { color:#30d8ff; }
+.pcid.fact { color:#c9eb00; } .pcid.other { color:#cdb4e2; }
+/* 未決をクリックしたときに出す小さなパネル */
+.pbox { position:fixed; z-index:50; max-width:420px; background:#232323; color:#e8e8e8;
+        border:1px solid #6b7280; border-radius:8px; padding:10px 12px; font-size:12px;
+        line-height:1.7; box-shadow:0 6px 24px #0008; }
+:root[data-theme="light"] .pbox { background:#fff; color:#111; box-shadow:0 6px 24px #0003; }
+.pbox b { font-size:13px; }
+.pbox .q { color:#9ca3af; }
+.pbox .btns { margin-top:8px; display:flex; gap:8px; }
+.pbox button { font-size:12px; padding:3px 14px; cursor:pointer; background:transparent;
+               color:inherit; border:1px solid #6b728088; border-radius:5px; }
+.pbox button:hover { background:#6b728033; }
 /* いまキー操作の対象になっているタイムライン。Space がどれに効くかを示す */
 .tl { border-left:3px solid transparent; padding-left:9px; margin-left:-12px; }
 .tl.tlfocus { border-left-color:#2563eb; }
@@ -284,6 +306,10 @@ function makeTimeline(root){
   function T(R,x){ return R.t0 + x/pxPerSec; }
   function inKeep(t){ return keeps.some(function(k){return k[0]<=t&&t<k[1];}); }
 
+  /* 象徴的セリフの単語番号を集合にしておく */
+  var hlSet=(function(){ var st={}; (D.hl||[]).forEach(function(r){
+    for(var i=r[0];i<=r[1];i++) st[i]=1; }); return st; })();
+
   function build(){
     host.innerHTML=''; rows=[];
     var probe=document.createElement('div'); probe.className='lane';
@@ -321,7 +347,8 @@ function makeTimeline(root){
           lane.appendChild(sl); lastTsRight=Math.max(x,lastTsRight)+sl.offsetWidth+8;
         }
         var el=document.createElement('span');
-        el.className='w'+((w.p&&w.p!==D.mainSpk)?(' s'+(w.p<=8?w.p:'x')):'');
+        el.className='w'+((w.p&&w.p!==D.mainSpk)?(' s'+(w.p<=8?w.p:'x')):'')
+                        +(hlSet[wi]?' hl':'');
         el.textContent=w.t; el.style.left=x+'px';
         el.dataset.s=w.s; el.dataset.e=w.e;
         lane.appendChild(el); els.push(el);
@@ -385,6 +412,26 @@ function makeTimeline(root){
         }
         R.bars.push({ki:ki,x0:x0,x1:x1,edgeS:(k[0]>=R.t0-1e-9),edgeE:(k[1]<=R.t1+1e-9)});
       });
+      /* 未決のカット候補をバーの下に細い帯で出す。押すとタイムライン上で黒くなる */
+      (D.pend||[]).forEach(function(pd){
+        if(pd.done) return;
+        var a=Math.max(pd.a,R.t0), b=Math.min(pd.b,R.t1);
+        if(b-a<=0) return;
+        var pb=document.createElement('div'); pb.className='pend '+pd.cat;
+        pb.style.left=X(R,a)+'px'; pb.style.width=Math.max(2,X(R,b)-X(R,a))+'px';
+        pb.title=pd.cid+' '+pd.why;
+        pb.onclick=function(ev){ ev.stopPropagation(); openPend(pd, ev.clientX, ev.clientY); };
+        R.strip.parentNode.appendChild(pb);
+        /* 理由を帯の直下に出す（旧 render_transcript の注釈行と同じ考え方）。
+           C番号はボタンがあるので出さない。 */
+        if(pd.a>=R.t0&&pd.a<R.t1){
+          var CAT={gpt:'カット推奨',speaker:'会話相手',fact:'事実確認',other:'その他'};
+          var lb=document.createElement('div'); lb.className='pcid '+pd.cat;
+          lb.textContent=(CAT[pd.cat]||pd.cat)+(pd.why?('：'+pd.why):'');
+          lb.style.left=X(R,pd.a)+'px';
+          R.strip.parentNode.appendChild(lb);
+        }
+      });
       R.edge=document.createElement('div'); R.edge.className='edge'; R.strip.appendChild(R.edge);
       R.hover=document.createElement('div'); R.hover.className='hoverline'; R.strip.appendChild(R.hover);
       R.play=document.createElement('div'); R.play.className='playline'; R.strip.appendChild(R.play);
@@ -427,6 +474,46 @@ function makeTimeline(root){
     if(best&&t-(+best.dataset.s)<10) best.classList.add('playing');
   }
 
+  var pbox=null;
+  function closePend(){ if(pbox){ pbox.remove(); pbox=null; } }
+  function openPend(pd,cx,cy){
+    closePend();
+    var CAT={gpt:'カット推奨',speaker:'会話相手',fact:'事実確認',other:'その他'};
+    pbox=document.createElement('div'); pbox.className='pbox';
+    pbox.style.left=Math.min(cx,window.innerWidth-440)+'px';
+    pbox.style.top=Math.min(cy+12,window.innerHeight-200)+'px';
+    var sec=Math.round(pd.b-pd.a);
+    pbox.innerHTML='<b>'+pd.cid+'　'+(CAT[pd.cat]||pd.cat)+'</b>　'+sec+'秒<br>'+
+      esc(pd.why)+(pd.q?'<br><span class="q">「'+esc(pd.q)+'」</span>':'')+
+      '<div class="btns"><button data-a="cut">カットする</button>'+
+      '<button data-a="keep">残す</button>'+
+      '<button data-a="close">閉じる</button></div>';
+    document.body.appendChild(pbox);
+    pbox.querySelectorAll('button').forEach(function(b){
+      b.onclick=function(){ var act=b.dataset.a;
+        if(act==='close'){ closePend(); return; }
+        decidePend(pd, act); closePend(); };
+    });
+  }
+  function esc(t){ return String(t).replace(/[&<>]/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]; }); }
+  function decidePend(pd, action){
+    pd.done=true;
+    if(action==='cut'){
+      pushUndo();
+      dropRange(pd.a, pd.b);
+      keeps.sort(function(a,b){return a[0]-b[0];});
+      selKi=-1; afterEdit();
+      setStatus(pd.cid+' をカットしました（端をドラッグして調整できます）');
+    }else{
+      renderBars();
+      setStatus(pd.cid+' は残すことにしました');
+    }
+    /* cut_decisions.json の status だけ更新する。drops はタイムライン側が
+       /edit_save で書くので、ここで両方書くと競合する。 */
+    fetch('/decide?id='+encodeURIComponent(D.id)+'&cid='+encodeURIComponent(pd.cid)
+          +'&action='+action+'&status_only=1');
+  }
   function pushUndo(){ undoStack.push(JSON.stringify(keeps)); if(undoStack.length>200)undoStack.shift(); redoStack=[]; }
   function afterEdit(){ renderBars(); styleWords(); movePlayhead(); scheduleSave(); }
   function setStatus(s){ if(elStat) elStat.textContent=s; }
@@ -671,7 +758,43 @@ window.addEventListener('resize',function(){
 """
 
 
-def timeline_block(idv, sg, tsegments, silence, main_spk=1):
+_QPUNCT = set(" 　、。，．・…！？!?「」『』（）()［］[]〈〉《》\"'\n\t")
+
+
+def _quote_ranges(words, quotes):
+    """highlight_quotes が本文のどの単語範囲にあたるかを返す（[[開始i, 終了i], ...]）。
+    GPT/Claude の引用は表記が微妙に違うので、句読点を除いた文字列で最長一致を探す。"""
+    from difflib import SequenceMatcher
+    if not quotes or not words:
+        return []
+    idx, buf = [], []
+    for i, w in enumerate(words):
+        for ch in w["t"]:
+            if ch in _QPUNCT:
+                continue
+            buf.append(ch)
+            idx.append(i)
+    hay = "".join(buf)
+    out = []
+    for q in quotes:
+        qn = "".join(c for c in str(q) if c not in _QPUNCT)
+        if len(qn) < 6:
+            continue
+        sm = SequenceMatcher(None, hay, qn, autojunk=False)
+        m = sm.find_longest_match(0, len(hay), 0, len(qn))
+        if m.size < 6:
+            continue
+        st = max(0, m.a - m.b)
+        en = min(len(hay), st + len(qn))
+        if en <= st:
+            continue
+        if SequenceMatcher(None, hay[st:en], qn, autojunk=False).ratio() < 0.6:
+            continue
+        out.append([idx[st], idx[en - 1]])
+    return out
+
+
+def timeline_block(idv, sg, tsegments, silence, main_spk=1, cutdecs=None, quotes=None):
     """文字起こしの場所に置くタイムライン。別ページは作らない（オーナー指示・2026-08-05）。"""
     idx = sg.get("index")
     s, e = float(sg["start_sec"]), float(sg["end_sec"])
@@ -695,9 +818,28 @@ def timeline_block(idv, sg, tsegments, silence, main_spk=1):
     sil = [[max(a, s), min(b, e)] for a, b in silence if b > s and a < e]
     sil = [[round(a, 3), round(b, 3)] for a, b in sil if b - a > 0.01]
 
+    # 未決のカット候補（D-013）。押したらタイムライン上で黒くなり、端をドラッグして調整できる。
+    pend = []
+    for cd in (cutdecs or []):
+        if cd.get("status") != "pending":
+            continue
+        a, b = float(cd["start_sec"]), float(cd["end_sec"])
+        if b <= s or a >= e:
+            continue
+        cat = cd.get("category") or "gpt"
+        pend.append({"cid": cd.get("cid", ""), "a": round(max(a, s), 3), "b": round(min(b, e), 3),
+                     "cat": cat if cat in ("gpt", "speaker", "fact") else "other",
+                     "why": (cd.get("reason") or cd.get("note") or ""),
+                     "q": cd.get("quote") or ""})
+    pend.sort(key=lambda x: x["a"])
+
+    # 象徴的セリフ（highlight_quotes）。本文中の該当語を太字にするため、
+    # 文字列一致で単語インデックスの範囲を求めておく（表示は太字のみ・色は付けない）。
+    hl = _quote_ranges(words, quotes or [])
+
     data = json.dumps({"id": idv, "index": idx, "segStart": s, "segEnd": e,
                        "drops": sg.get("drops") or [], "words": words, "silence": sil,
-                       "mainSpk": main_spk},
+                       "mainSpk": main_spk, "pend": pend, "hl": hl},
                       ensure_ascii=False).replace("</", "<\\/")
     vad_note = ("青緑＝発話・黄＝VADが検出した無音（黄をダブルクリックでその無音だけ落ちる）"
                 if sil else "VAD 未実行のため無音の塗り分けなし（python scripts/detect_vad.py &lt;ID&gt;）")
@@ -1382,16 +1524,18 @@ def render_id(idv):
         # 別ページを開かず、この画面で切る。
         parts.append("<div class='transcript'>"
                      + timeline_block(idv, sg, d["tsegments"], d["silence_spans"],
-                                      d["main_speaker"]) + "</div>")
+                                      d["main_speaker"], d["cut_decisions"], quotes)
+                     + "</div>")
         parts.append("</div>")
 
     return page(f"{idv} 生成物", "".join(parts))
 
 
-def apply_decision(idv, cid, action):
-    """カット/残す ボタンの確定処理。cut_decisions.json の status を更新し、
-    cut なら該当セグメントの drops に区間を追加、keep なら（同一区間の drop があれば）外す。
-    動画への反映は render.py の再実行時（チャットで依頼）。"""
+def apply_decision(idv, cid, action, status_only=False):
+    """カット/残す ボタンの確定処理。cut_decisions.json の status を更新する。
+    status_only=True のときは segments.json に触らない。タイムラインから押された場合は
+    drops をタイムライン自身が /edit_save で書くので、二重に書くと競合するため。
+    動画への反映は render.py の再実行時。"""
     import datetime
     if idv not in list_ids() or action not in ("cut", "keep"):
         return False
@@ -1407,6 +1551,10 @@ def apply_decision(idv, cid, action):
             break
     if target is None:
         return False
+    if status_only:
+        with open(dec_path, "w", encoding="utf-8") as f:
+            json.dump(dec, f, ensure_ascii=False, indent=2)
+        return True
     seg_path = os.path.join(base, "segments.json")
     seg = _load_json(seg_path, {})
     st, en = float(target["start_sec"]), float(target["end_sec"])
@@ -1459,7 +1607,8 @@ class Handler(BaseHTTPRequestHandler):
             elif route == "/decide":
                 ok = apply_decision((qs.get("id") or [""])[0],
                                     (qs.get("cid") or [""])[0],
-                                    (qs.get("action") or [""])[0])
+                                    (qs.get("action") or [""])[0],
+                                    (qs.get("status_only") or ["0"])[0] == "1")
                 data = (b"ok" if ok else b"ng")
                 self.send_response(200 if ok else 400)
                 self.send_header("Content-Type", "text/plain")
