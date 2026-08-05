@@ -8,6 +8,11 @@
 ホームディレクトリや共有の場所（`~/venvs`, `~/.cache` を要求する置き方, `/usr/local` など）に
 プロジェクト固有のものを散らさない。作業ディレクトリごと移動・複製・削除すれば完結する状態を保つ。
 
+## 記録・議事録
+- セッションを終了する合図をオーナーが出したらそれまでのチャット履歴全体から docs/discussions/discussion_{yyyyMMdd}_{topic}.md , DECISIONS.md, findings.md, GUIDELINES.mdをまとめる準備をする．
+- discussionはその日の議事録でありオーナーの発言は完全な生原文を保持，Claudeの応答は要点を網羅する形で省略しすぎないよう注意しながら少しコンパクトに書く．DECISIONSは決定事項をまとめる．findings.mdは発見したこと，例えば実測してわかったことを記録すると再実測せず次の判断に使える．GUIDELINESはオーナーの指示原文と文脈を記録することで同じ仕事上の誤りを犯さないようにする．
+- DECISIONS,findings,GUIDELINESは基本的にはその場で書き留め，discussionはセッションの終わりにまとめて記録するか，手が空いた時に少しずつ書いていく．
+
 ## 具体ルール
 1. **Python 仮想環境はプロジェクト直下に置く／作ったら必ず requirements.txt を同梱する**
    - `<project>/venv` に作る。`~/venvs/...` には作らない。

@@ -91,16 +91,23 @@ fi
 CHUNK_SEC="${WHISPER_CHUNK_SEC:-720}"
 CHUNK_OVERLAP="${WHISPER_CHUNK_OVERLAP:-6}"
 
-# 語彙バイアス用 initial_prompt。番組の固有名詞・専門用語を先に見せてトークン確率を上げる。
-# data/<ID>/asr_prompt.txt があれば全チャンクに渡す（チャンクごとに効き直す）。
-# 作り方: python scripts/make_asr_prompt.py <ID>
+# 語彙バイアス用 initial_prompt。
+#
+# 【既定で無効】WHISPER_PROMPT=1 を明示したときだけ有効になる。
+# 実測（docs/findings.md 5章）で、プロンプトは幻覚ループを誘発することが分かった:
+#   ・冒頭120秒が「ご視聴ありがとうございました。」×4 の60字だけになり全滅した
+#     （プロンプトなしなら659字を正しく起こす）
+#   ・プロンプト文そのものを本文として反復出力した
+#   ・話者が言っていない「私は」を繰り返し挿入し、一人称の文体に書き換えた
+# 得られるのは固有名詞の改善（「演役」→「演繹」）だが、失うのは発言忠実性であり、
+# D-015 でオーナーが Whisper を選んだ理由そのものを壊す。割に合わない。
 # 引数は配列で持つ。文字列に入れて $VAR で展開すると、パスに空白があったとき
 # （また zsh 由来のシェルでは常に）1引数に潰れて argparse に弾かれる。
 # 展開側は ${ARR[@]+"${ARR[@]}"} と書く。macOS の bash 3.2 は set -u のもとで
 # 空配列の "${ARR[@]}" を unbound variable として落とすため（bash 4.4 以降は問題ない）。
 PROMPT_FILE="$OUT/asr_prompt.txt"
 PROMPT_ARGS=()
-if [ "${WHISPER_PROMPT:-1}" != "0" ] && [ -s "$PROMPT_FILE" ]; then
+if [ "${WHISPER_PROMPT:-0}" = "1" ] && [ -s "$PROMPT_FILE" ]; then
   PROMPT_ARGS=(--prompt "$PROMPT_FILE")
   echo "[transcribe] 語彙バイアス: $(basename "$PROMPT_FILE") を全チャンクに渡します"
 fi
