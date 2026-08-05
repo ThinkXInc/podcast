@@ -91,6 +91,18 @@ fi
 CHUNK_SEC="${WHISPER_CHUNK_SEC:-720}"
 CHUNK_OVERLAP="${WHISPER_CHUNK_OVERLAP:-6}"
 
+# 語彙バイアス用 initial_prompt。番組の固有名詞・専門用語を先に見せてトークン確率を上げる。
+# data/<ID>/asr_prompt.txt があれば全チャンクに渡す（チャンクごとに効き直す）。
+# 作り方: python scripts/make_asr_prompt.py <ID>
+# 引数は配列で持つ。文字列に入れて $VAR で展開すると、パスに空白があったとき
+# （また zsh 由来のシェルでは常に）1引数に潰れて argparse に弾かれる。
+PROMPT_FILE="$OUT/asr_prompt.txt"
+PROMPT_ARGS=()
+if [ "${WHISPER_PROMPT:-1}" != "0" ] && [ -s "$PROMPT_FILE" ]; then
+  PROMPT_ARGS=(--prompt "$PROMPT_FILE")
+  echo "[transcribe] 語彙バイアス: $(basename "$PROMPT_FILE") を全チャンクに渡します"
+fi
+
 # 音源全体の長さ(秒)
 DUR="$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$MEDIA" | cut -d. -f1)"
 [ -n "$DUR" ] || { echo "[transcribe] 長さ取得に失敗"; exit 1; }
@@ -132,12 +144,13 @@ while read -r ci cstart cend; do
   # 文字起こし（このチャンク専用の出力先）
   cdir="$WORK/out_${ci}"; mkdir -p "$cdir"
   if [ "$ENGINE" = "mlx" ]; then
-    # mlx-whisper: openai-whisper 互換の JSON（segments[].words に word/start/end）。
-    # マージ側は word_segments が無ければ segments[].words を拾うのでスキーマ互換。
-    "$VENV/bin/mlx_whisper" "$cfile" \
-      --model "$MLX_MODEL" --language "$LANG" --task transcribe \
-      --word-timestamps True --verbose False \
-      --output-dir "$cdir" --output-format json </dev/null
+    # mlx_whisper の CLI は使わない。CLI は --temperature の既定が単一値 0 で、
+    # Whisper 標準の「幻覚ループ時に温度を上げて再デコードする」フォールバックが
+    # 無効になる（実測で70秒ぶん同じ文を繰り返して内容が消えた）。
+    # Python API 経由なら既定の温度梯子が効くので、専用ドライバを呼ぶ。
+    "$VENV/bin/python3" "$HERE/scripts/mlx_transcribe.py" \
+      "$cfile" "$cdir/chunk.json" \
+      --model "$MLX_MODEL" --lang "$LANG" "${PROMPT_ARGS[@]}" </dev/null
   else
     whisperx "$cfile" \
       --model "$MODEL" --device "$DEVICE" --compute_type "$COMPUTE" \
