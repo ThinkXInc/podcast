@@ -170,35 +170,29 @@ TIMELINE_CSS = """
 .tlstat { margin-left:auto; }
 .tlhelp { font-size:11px; color:#6b7280; line-height:1.8; margin:0 0 8px; }
 
-.row { position:relative; margin:0 0 4px; }
-.rowtime { position:absolute; left:0; top:0; font-size:10px; color:#6b7280;
-           font-variant-numeric:tabular-nums; }
-.lane { position:relative; margin-left:52px; height:46px; }
-.w { position:absolute; top:0; white-space:pre; font-size:14px; line-height:20px;
+.row { position:relative; margin:0 0 10px; }
+.lane { position:relative; height:56px; }
+/* 上から: タイムスタンプ / 発話テキスト / バー。すべて同じ時間軸の x 座標に置く。 */
+.ts2 { position:absolute; top:0; font-size:11px; color:#8a8a8a;
+       font-variant-numeric:tabular-nums; white-space:nowrap; }
+.w { position:absolute; top:16px; white-space:pre; font-size:14px; line-height:20px;
      cursor:pointer; border-radius:2px; }
-.w.cut { color:#585858; }
-:root[data-theme="light"] .w.cut { color:#c9c9c9; }
+.w.cut { color:#8a8a8a; }
 .w.playing { background:#2563eb33; }
-.strip { position:absolute; left:0; right:0; top:24px; height:18px; cursor:crosshair; }
-/* バーは「残す区間」。カットしない限り分割せず、セグメント全体で1本のまま。
-   バーの中を VAD で塗り分ける: 緑＝発話 / 黄＝無音。
-   緑・黄・緑 と並んでいたら、黄だけ切れば無音が落とせる、という読み方をする。 */
-.bar { position:absolute; top:3px; height:9px; border-radius:2px; overflow:hidden;
-       background:#3f8f5f; }
-.bar .sil { position:absolute; top:0; bottom:0; background:#d8b230; }
-:root[data-theme="light"] .bar { background:#4da36f; }
-:root[data-theme="light"] .bar .sil { background:#e8c552; }
-.bar.sel { box-shadow:0 0 0 2px #2563eb, 0 0 0 3px #2563eb55; }
-/* VAD がまだ無い ID では塗り分けできないのでグレー1色にする */
-.bar.novad { background:#7d8b9f; }
-:root[data-theme="light"] .bar.novad { background:#9aa6b6; }
-.gapline { position:absolute; top:7px; height:1px; background:#4b5563; }
-:root[data-theme="light"] .gapline { background:#d4d4d4; }
-.hoverline { position:absolute; top:-24px; bottom:-2px; width:1px; background:#9ca3af;
+/* バーは常に1本の連続した帯。カットしても消さず、黒く塗る（AfterEffects と同じ見え方）。
+   青緑＝発話 / 黄＝VADが検出した無音 / 黒＝カット済み。 */
+.strip { position:absolute; left:0; right:0; top:40px; height:16px; cursor:crosshair; }
+.barbase { position:absolute; top:0; height:16px; background:#5f8a9c; }
+.sil { position:absolute; top:0; height:16px; background:#a89a3c; }
+.cutz { position:absolute; top:0; height:16px; background:#2e2e2e; }
+/* ドラッグ中の端は印として明示する（AfterEffects と同様） */
+.edge { position:absolute; top:-2px; height:20px; width:2px; background:#e8e8e8; opacity:0; }
+.edge.on { opacity:1; }
+.hoverline { position:absolute; top:-26px; bottom:-2px; width:1px; background:#9ca3af;
              display:none; pointer-events:none; }
-.playline { position:absolute; top:-24px; bottom:-2px; width:2px; background:#e11d48;
+.playline { position:absolute; top:-26px; bottom:-2px; width:2px; background:#e11d48;
             display:none; pointer-events:none; z-index:3; }
-.tlabel { position:absolute; top:-38px; font-size:10px; color:#9ca3af; display:none;
+.tlabel { position:absolute; top:-40px; font-size:10px; color:#9ca3af; display:none;
           pointer-events:none; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .tlwait { color:#6b7280; font-size:12px; padding:12px 0; }
 """
@@ -223,6 +217,7 @@ function makeTimeline(root){
   var keeps=complement(D.drops||[]);
   var undoStack=[], redoStack=[], playhead=D.segStart, selKi=-1;
   var rows=[], laneW=0, built=false, saveTimer=null;
+  var dragging=null, pendingDrag=null;
   var host=root.querySelector('.tlrows');
   var elTime=root.querySelector('.tltime'), elKeep=root.querySelector('.tlkeep');
   var elStat=root.querySelector('.tlstat'), elZoom=root.querySelector('.tlzoom');
@@ -266,21 +261,27 @@ function makeTimeline(root){
     for(var r=0;r<nRows;r++){
       var t0=D.segStart+r*rowSec, t1=Math.min(D.segEnd,t0+rowSec);
       var row=document.createElement('div'); row.className='row';
-      var lab=document.createElement('div'); lab.className='rowtime';
-      lab.textContent=fmtAbs(t0); row.appendChild(lab);
       var lane=document.createElement('div'); lane.className='lane'; row.appendChild(lane);
       var strip=document.createElement('div'); strip.className='strip'; lane.appendChild(strip);
-      var lastRight=-1e9, els=[];
+      var lastRight=-1e9, lastTsRight=-1e9, els=[], prevEnd=null;
       while(wi<D.words.length && D.words[wi].s < t1){
         var w=D.words[wi];
         if(w.e<=t0){ wi++; continue; }
         var x=(w.s-t0)*pxPerSec;
         if(x<lastRight) x=lastRight;
+        /* 発話ブロックの頭にタイムスタンプを出す（前の語から0.8秒以上空いたら新ブロック） */
+        if(prevEnd===null || w.s-prevEnd>=0.8){
+          if(x>=lastTsRight){
+            var ts=document.createElement('div'); ts.className='ts2';
+            ts.textContent=fmtAbs(w.s); ts.style.left=x+'px';
+            lane.appendChild(ts); lastTsRight=x+ts.offsetWidth+8;
+          }
+        }
         var el=document.createElement('span');
         el.className='w'; el.textContent=w.t; el.style.left=x+'px';
         el.dataset.s=w.s; el.dataset.e=w.e;
         lane.appendChild(el); els.push(el);
-        lastRight=x+el.offsetWidth; wi++;
+        lastRight=x+el.offsetWidth; prevEnd=w.e; wi++;
       }
       host.appendChild(row);
       var R={t0:t0,t1:t1,strip:strip,els:els,bars:[]};
@@ -292,30 +293,60 @@ function makeTimeline(root){
   function renderBars(){
     rows.forEach(function(R){
       R.strip.innerHTML=''; R.bars=[];
-      var g=document.createElement('div'); g.className='gapline';
-      g.style.left='0px'; g.style.width=X(R,R.t1)+'px'; R.strip.appendChild(g);
-      keeps.forEach(function(k,ki){
+      var W=X(R,R.t1);
+      /* 1) 土台は発話色で全幅。バーは切っても消さない */
+      var base=document.createElement('div'); base.className='barbase';
+      base.style.left='0px'; base.style.width=W+'px'; R.strip.appendChild(base);
+      /* 2) VAD の無音を黄で塗る */
+      D.silence.forEach(function(sv){
+        var a=Math.max(sv[0],R.t0), b=Math.min(sv[1],R.t1);
+        if(b-a<=0) return;
+        var d=document.createElement('div'); d.className='sil';
+        d.style.left=X(R,a)+'px'; d.style.width=Math.max(1,X(R,b)-X(R,a))+'px';
+        R.strip.appendChild(d);
+      });
+      /* 3) カット済み（keeps の隙間）を黒で塗る。黒が最優先 */
+      var t=D.segStart;
+      var ks=keeps.slice().sort(function(a,b){return a[0]-b[0];});
+      var cuts=[];
+      ks.forEach(function(k){ if(k[0]-t>EPS) cuts.push([t,k[0]]); t=Math.max(t,k[1]); });
+      if(D.segEnd-t>EPS) cuts.push([t,D.segEnd]);
+      cuts.forEach(function(c){
+        var a=Math.max(c[0],R.t0), b=Math.min(c[1],R.t1);
+        if(b-a<=0) return;
+        var d=document.createElement('div'); d.className='cutz';
+        d.style.left=X(R,a)+'px'; d.style.width=Math.max(1,X(R,b)-X(R,a))+'px';
+        R.strip.appendChild(d);
+      });
+      /* 4) ドラッグできる端（keeps の境界）を記録。選択中は枠で示す */
+      ks.forEach(function(k){
+        var ki=keeps.indexOf(k);
         if(k[1]<=R.t0||k[0]>=R.t1) return;
-        var a=Math.max(k[0],R.t0), b=Math.min(k[1],R.t1);
-        var x0=X(R,a), x1=X(R,b);
-        var bar=document.createElement('div');
-        bar.className='bar'+(ki===selKi?' sel':'')+(D.silence.length?'':' novad');
-        bar.style.left=x0+'px'; bar.style.width=Math.max(1,x1-x0)+'px';
-        D.silence.forEach(function(sv){
-          var sa=Math.max(sv[0],a), sb=Math.min(sv[1],b);
-          if(sb-sa<=0) return;
-          var dd=document.createElement('div'); dd.className='sil';
-          dd.style.left=(X(R,sa)-x0)+'px';
-          dd.style.width=Math.max(1,X(R,sb)-X(R,sa))+'px';
-          bar.appendChild(dd);
-        });
-        R.strip.appendChild(bar);
+        var x0=X(R,Math.max(k[0],R.t0)), x1=X(R,Math.min(k[1],R.t1));
+        if(ki===selKi){
+          var sel=document.createElement('div'); sel.className='edge on';
+          sel.style.left=x0+'px'; sel.style.width=Math.max(1,x1-x0)+'px';
+          sel.style.background='transparent';
+          sel.style.boxShadow='inset 0 0 0 2px #2563eb';
+          R.strip.appendChild(sel);
+        }
         R.bars.push({ki:ki,x0:x0,x1:x1,edgeS:(k[0]>=R.t0-1e-9),edgeE:(k[1]<=R.t1+1e-9)});
       });
+      R.edge=document.createElement('div'); R.edge.className='edge'; R.strip.appendChild(R.edge);
       R.hover=document.createElement('div'); R.hover.className='hoverline'; R.strip.appendChild(R.hover);
       R.play=document.createElement('div'); R.play.className='playline'; R.strip.appendChild(R.play);
       R.tlab=document.createElement('div'); R.tlab.className='tlabel'; R.strip.appendChild(R.tlab);
     });
+    showDragEdge();
+  }
+  function showDragEdge(){
+    rows.forEach(function(R){ if(R.edge) R.edge.classList.remove('on'); });
+    if(!dragging) return;
+    var k=keeps[dragging.ki]; if(!k) return;
+    var t=dragging.which===0?k[0]:k[1];
+    var R=rows.find(function(R){return R.t0<=t&&t<=R.t1;});
+    if(R&&R.edge){ R.edge.style.left=X(R,t)+'px'; R.edge.style.width='2px';
+      R.edge.style.background='#e8e8e8'; R.edge.classList.add('on'); }
   }
   function styleWords(){
     rows.forEach(function(R){
@@ -419,7 +450,6 @@ function makeTimeline(root){
     });
     return out;
   }
-  var dragging=null, pendingDrag=null;
   function bindStrip(R){
     R.strip.addEventListener('mousemove',function(ev){
       if(dragging||pendingDrag) return;
@@ -571,8 +601,8 @@ def timeline_block(idv, sg, tsegments, silence):
     data = json.dumps({"id": idv, "index": idx, "segStart": s, "segEnd": e,
                        "drops": sg.get("drops") or [], "words": words, "silence": sil},
                       ensure_ascii=False).replace("</", "<\\/")
-    vad_note = ("緑＝発話 / 黄＝無音（黄をダブルクリックでその無音だけ落とす）"
-                if sil else "VAD 未実行のため塗り分けなし（python scripts/detect_vad.py &lt;ID&gt;）")
+    vad_note = ("青緑＝発話・黄＝VADが検出した無音（黄をダブルクリックでその無音だけ落ちる）"
+                if sil else "VAD 未実行のため無音の塗り分けなし（python scripts/detect_vad.py &lt;ID&gt;）")
     return (
         f"<div class='tl' id='tl{idx}'>"
         "<div class='tlbar'>"
@@ -585,7 +615,7 @@ def timeline_block(idv, sg, tsegments, silence):
         "<span class='tlstat'>保存済み</span>"
         "</div>"
         f"<div class='tlhelp'>文字は時間軸上の位置に置いてあるので、文字間の空白がそのまま無音の長さです。"
-        f"バーは残す区間で、切らない限り1本のままです。{vad_note}。"
+        f"バーは常に1本の帯で、{vad_note}、黒＝カット済み。"
         "Space 再生（カット部はスキップ）・⌘D スプリット・端をドラッグでトリム・"
         "クリックで選択して Delete で削除・⌘Z 取り消し・⌘± ズーム。自動保存されます。</div>"
         f"<div class='tlrows'><div class='tlwait'>スクロールすると組み上がります（単語 {len(words)}）…</div></div>"
