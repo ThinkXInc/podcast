@@ -275,6 +275,7 @@ var audio=document.getElementById('orig');
 var active=null;                      /* いま再生中のタイムライン */
 var pxPerSec=parseFloat(localStorage.getItem('tl_pps'))||140;
 var insts=[];
+var hovered=null;   /* マウスが乗っているタイムライン。キー操作はここを最優先 */
 
 function fmtAbs(t){
   var h=Math.floor(t/3600), m=Math.floor((t%3600)/60), s=Math.floor(t%60);
@@ -377,6 +378,9 @@ function makeTimeline(root){
   function renderBars(){
     rows.forEach(function(R){
       R.strip.innerHTML=''; R.bars=[];
+      /* 未決カットの帯とラベルは strip の外（lane）に置くので、ここで消さないと
+         「残す」を押しても推奨マークが画面に残り続ける */
+      R.strip.parentNode.querySelectorAll('.pend,.pcid').forEach(function(n){ n.remove(); });
       var W=X(R,R.t1);
       /* 1) 土台は発話色で全幅。バーは切っても消さない */
       var base=document.createElement('div'); base.className='barbase';
@@ -488,7 +492,28 @@ function makeTimeline(root){
   }
 
   var pbox=null;
+  var hoverT=null;   /* マウスが行の上にあるときの時刻。⌘D はここで割る */
   function closePend(){ if(pbox){ pbox.remove(); pbox=null; } }
+  function openCtx(R,t,cx,cy){
+    /* 右クリックメニュー。即実行は誤操作しやすい（オーナー指示・2026-08-05）ので
+       メニューから選んで実行する */
+    closePend();
+    pbox=document.createElement('div'); pbox.className='pbox';
+    pbox.style.left=Math.min(cx,window.innerWidth-260)+'px';
+    pbox.style.top=Math.min(cy+8,window.innerHeight-140)+'px';
+    pbox.innerHTML='<b>'+fmtAbs(t)+'</b>'+
+      '<div class="btns"><button data-a="split">ここでスプリット</button>'+
+      '<button data-a="play">ここから再生</button>'+
+      '<button data-a="close">閉じる</button></div>';
+    document.body.appendChild(pbox);
+    pbox.querySelectorAll('button').forEach(function(b){
+      b.onclick=function(){
+        var act=b.dataset.a; closePend();
+        if(act==='split'){ playhead=t; movePlayhead(); splitAt(t); }
+        else if(act==='play'){ selectInst(api); playhead=t; movePlayhead(); play(); }
+      };
+    });
+  }
   function openPend(pd,cx,cy){
     closePend();
     var CAT={gpt:'カット推奨',speaker:'会話相手',fact:'事実確認',other:'その他'};
@@ -634,6 +659,21 @@ function makeTimeline(root){
     R.strip.addEventListener('mouseleave',function(){
       R.hover.style.display='none'; R.tlab.style.display='none';
     });
+    var lane=R.strip.parentNode;
+    /* 行のどこ（文字の上でも）にマウスがあっても、その時刻を ⌘D 用に覚えておく */
+    lane.addEventListener('mousemove',function(ev){
+      hoverT=T(R, ev.clientX-R.strip.getBoundingClientRect().left);
+      hovered=api;
+    });
+    lane.addEventListener('mouseleave',function(){ hoverT=null;
+      if(hovered===api) hovered=null; });
+    /* 右クリック＝メニュー（ここでスプリット／ここから再生）。文字の上でも効く */
+    lane.addEventListener('contextmenu',function(ev){
+      ev.preventDefault();
+      selectInst(api);
+      var t=T(R, ev.clientX-R.strip.getBoundingClientRect().left);
+      openCtx(R, t, ev.clientX, ev.clientY);
+    });
     R.strip.addEventListener('dblclick',function(ev){
       /* 黄（無音）をダブルクリック＝その無音だけ落とす */
       var x=ev.clientX-R.strip.getBoundingClientRect().left, t=T(R,x);
@@ -700,11 +740,17 @@ function makeTimeline(root){
   var zi=root.querySelector('.tlzin'), zo=root.querySelector('.tlzout');
   if(zi) zi.onclick=function(){ setZoomAll(pxPerSec*1.4); };
   if(zo) zo.onclick=function(){ setZoomAll(pxPerSec/1.4); };
-  var ds=root.querySelector('.tldropsil');
-  if(ds) ds.onclick=function(){ selectInst(api); dropAllSilence(1.0); };
+  /* 「無音を一括で落とす」ボタンは廃止（オーナー指示・2026-08-05。
+     一括操作は編集を全部飛ばす危険があるため。黄帯のダブルクリックで1箇所ずつは残す） */
+  var ub=root.querySelector('.tlundo'), rb=root.querySelector('.tlredo');
+  if(ub) ub.onclick=function(){ selectInst(api); api.undo(); };
+  if(rb) rb.onclick=function(){ selectInst(api); api.redo(); };
 
   var api={ root:root, build:build, isBuilt:function(){return built;}, rebuild:function(){ if(built) build(); },
-            play:play, stop:stop, splitAt:function(){ splitAt(playhead); },
+            play:play, stop:stop,
+            /* ⌘D: マウスが行の上にあればその位置、なければ再生位置で割る */
+            splitAt:function(){ var t=(hoverT!=null)?hoverT:playhead;
+              playhead=t; movePlayhead(); splitAt(t); },
             undo:function(){ if(!undoStack.length)return; redoStack.push(JSON.stringify(keeps));
               keeps=JSON.parse(undoStack.pop()); selKi=-1; afterEdit(); },
             redo:function(){ if(!redoStack.length)return; undoStack.push(JSON.stringify(keeps));
@@ -739,7 +785,10 @@ function setZoomAll(v){
 
 document.addEventListener('keydown',function(e){
   if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA') return;
-  var a=active||focused||pickVisible();
+  /* ⌘D はタイムラインが拾えない場合でも先に抑止する。
+     さもないとブラウザのブックマーク追加が開き「効かない」ように見える */
+  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='d') e.preventDefault();
+  var a=hovered||active||focused||pickVisible();
   if(!a){ return; }
   if(a!==focused) selectInst(a);
   if(!a.isBuilt()) a.build();
@@ -864,12 +913,13 @@ def timeline_block(idv, sg, tsegments, silence, main_spk=1, cutdecs=None, quotes
         "<span class='tlkeep'></span>"
         "<button class='tlzout'>−</button><button class='tlzin'>＋</button>"
         "<span class='tlzoom'></span>"
-        "<button class='tldropsil'>無音を一括で落とす</button>"
+        "<button class='tlundo'>↩ 元に戻す</button><button class='tlredo'>↪ やり直す</button>"
         "<span class='tlstat'>保存済み</span>"
         "</div>"
         f"<div class='tlhelp'>文字は時間軸上の位置に置いてあるので、文字間の空白がそのまま無音の長さです。"
         f"バーは常に1本の帯で、{vad_note}、黒＝カット済み。"
-        "Space 再生（カット部はスキップ）・⌘D スプリット・端をドラッグでトリム・"
+        "Space 再生（カット部はスキップ）・<b>⌘D＝マウス位置でスプリット</b>・"
+        "右クリック＝メニュー（スプリット/再生）・端をドラッグでトリム・"
         "クリックで選択して Delete で削除・⌘Z 取り消し・⌘± ズーム。自動保存されます。</div>"
         f"<div class='tlrows'><div class='tlwait'>スクロールすると組み上がります（単語 {len(words)}）…</div></div>"
         f"<script type='application/json'>{data}</script>"
@@ -908,9 +958,30 @@ def apply_timeline_save(payload):
         changed = True
     if not changed:
         return False
+    _append_history(base, seg_path)
     with open(seg_path, "w", encoding="utf-8") as f:
         json.dump(seg, f, ensure_ascii=False, indent=2)
     return True
+
+
+def _append_history(base, seg_path):
+    """segments.json を上書きする前に、直前の内容を履歴へ退避する（保険）。
+    edit/segments_history.jsonl に1行1スナップショットで貯める。最新200件だけ残す。"""
+    import datetime
+    try:
+        with open(seg_path, encoding="utf-8") as f:
+            prev = f.read()
+        hist = os.path.join(idpaths.edit_dir(base), "segments_history.jsonl")
+        lines = []
+        if os.path.isfile(hist):
+            with open(hist, encoding="utf-8") as f:
+                lines = f.read().splitlines()
+        lines.append(json.dumps({"at": datetime.datetime.now().isoformat(timespec="seconds"),
+                                 "segments_json": prev}, ensure_ascii=False))
+        with open(hist, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines[-200:]) + "\n")
+    except Exception:
+        pass  # 履歴が書けなくても保存自体は続ける
 
 
 def esc(s):
@@ -945,6 +1016,17 @@ def page(title, body):
         "function decide(cid,action){var idv=new URLSearchParams(location.search).get('id');"
         "fetch('/decide?id='+encodeURIComponent(idv)+'&cid='+cid+'&action='+action)"
         ".then(function(){location.reload();});}"
+        # 「この編集で書き出す」: render.py を1セグメントだけ走らせ、終わったらリロード
+        "function renderSeg(idx){var idv=new URLSearchParams(location.search).get('id');"
+        "var el=document.getElementById('rst'+idx);"
+        "fetch('/render_seg?id='+encodeURIComponent(idv)+'&index='+idx).then(function(r){return r.text();})"
+        ".then(function(st){if(st!=='started'&&st!=='already_running'){el.textContent='開始できません: '+st;return;}"
+        "el.textContent='書き出し中…（数分かかります。ページを開いたままで）';"
+        "var iv=setInterval(function(){"
+        "fetch('/render_status?id='+encodeURIComponent(idv)+'&index='+idx).then(function(r){return r.text();})"
+        ".then(function(s){if(s==='done'){clearInterval(iv);el.textContent='完了。再読み込みします…';location.reload();}"
+        "else if(s.indexOf('failed')===0){clearInterval(iv);"
+        "el.textContent='書き出し失敗（generated/render_'+idx+'.log を確認）';}});},5000);});}"
         # 再生中の箇所の背景ハイライト
         "document.addEventListener('timeupdate',function(e){var el=e.target,sel,attr;"
         "if(el.tagName==='VIDEO'){sel=\"[data-v='\"+el.id+\"']\";attr='data-t';}"
@@ -1033,6 +1115,21 @@ def seg_dirname(idv, index, title):
     prefix = f"{index:02d}_"
     for n in list_segments(idv):
         if n.startswith(prefix):
+            return n
+    return None
+
+
+def seg_audio_name(idv, index):
+    """export_audio.py が書く {ID}_{INDEX}_{TITLE}.m4a を contents/ 直下から探す。
+    macOS はファイル名の Unicode 正規化（NFC/NFD）が混在するので、比較は NFC に揃える。"""
+    import unicodedata
+    cdir = os.path.join(DATA_DIR, idv, "contents")
+    if not os.path.isdir(cdir):
+        return None
+    prefix = unicodedata.normalize("NFC", f"{idv}_{index}_")
+    for n in sorted(os.listdir(cdir)):
+        nn = unicodedata.normalize("NFC", n)
+        if nn.startswith(prefix) and nn.endswith(".m4a"):
             return n
     return None
 
@@ -1550,6 +1647,11 @@ def render_id(idv):
             f"<div class='meta'>{dur_jp} [{fmt_time(s)}〜{fmt_time(e)}]</div></div>"
         )
 
+        aud = seg_audio_name(idv, idx)
+        if aud:
+            u = "/media?p=" + urllib.parse.quote(f"{idv}/contents/{aud}")
+            parts.append(f"<audio src='{u}' controls preload='metadata' style='width:100%'></audio>")
+            parts.append(f"<div class='dl'><a href='{u}' download>{esc(aud)}</a></div>")
         if segfolder and os.path.isfile(os.path.join(DATA_DIR, idv, "contents", segfolder, "final.mp4")):
             parts.append(f"<video id='vid{idx}' src='{media_url(idv, segfolder, 'final.mp4')}' controls preload='metadata'></video>")
             links = [f"<a href='{media_url(idv, segfolder, fn)}'>{esc(lb)}</a>"
@@ -1557,8 +1659,10 @@ def render_id(idv):
                      if os.path.isfile(os.path.join(DATA_DIR, idv, "contents", segfolder, fn))]
             if links:
                 parts.append("<div class='dl'>" + "".join(links) + "</div>")
-        else:
-            parts.append("<p class='meta'>final.mp4 なし</p>")
+        parts.append(
+            f"<p class='meta'><button onclick='renderSeg({idx})'>"
+            + ("この編集で書き出し直す（m4a）" if aud else "この編集で書き出す（m4a）")
+            + f"</button>　<span id='rst{idx}' class='meta'></span></p>")
 
         # 要約: segments.json の summary（現在の切り出し内容から作り直したもの）を優先。
         # レビューは表示しない。見出しラベルも付けず本文だけ。
@@ -1628,6 +1732,42 @@ def apply_decision(idv, cid, action, status_only=False):
     return True
 
 
+# 書き出し中のプロセス。key=(ID, index) → subprocess.Popen
+RENDERS = {}
+
+
+def start_render(idv, index):
+    """render.py を1セグメントだけバックグラウンドで走らせる。"""
+    import subprocess
+    if idv not in list_ids():
+        return "bad_id"
+    key = (idv, index)
+    p = RENDERS.get(key)
+    if p is not None and p.poll() is None:
+        return "already_running"
+    root = os.path.dirname(HERE)
+    py = os.path.join(root, "venv", "bin", "python")
+    if not os.path.isfile(py):
+        py = _sys.executable
+    logdir = idpaths.gen_dir(os.path.join(DATA_DIR, idv))
+    logf = open(os.path.join(logdir, f"render_{index}.log"), "w", encoding="utf-8")
+    # 書き出しは mp3（{ID}_{INDEX}_{TITLE}.mp3・オーナー指示 2026-08-05）。
+    # 動画や字幕が要るときは render.py を手で実行する。
+    RENDERS[key] = subprocess.Popen(
+        [py, os.path.join(root, "scripts", "export_audio.py"), idv, "--index", str(index)],
+        cwd=root, stdout=logf, stderr=subprocess.STDOUT)
+    return "started"
+
+
+def render_status(idv, index):
+    p = RENDERS.get((idv, index))
+    if p is None:
+        return "none"
+    if p.poll() is None:
+        return "running"
+    return "done" if p.returncode == 0 else f"failed({p.returncode})"
+
+
 def safe_media_path(p):
     rel = urllib.parse.unquote(p or "")
     full = os.path.realpath(os.path.join(DATA_DIR, rel))
@@ -1661,6 +1801,24 @@ class Handler(BaseHTTPRequestHandler):
                                     (qs.get("status_only") or ["0"])[0] == "1")
                 data = (b"ok" if ok else b"ng")
                 self.send_response(200 if ok else 400)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            elif route == "/render_seg":
+                st = start_render((qs.get("id") or [""])[0],
+                                  int((qs.get("index") or ["0"])[0]))
+                data = st.encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            elif route == "/render_status":
+                st = render_status((qs.get("id") or [""])[0],
+                                   int((qs.get("index") or ["0"])[0]))
+                data = st.encode()
+                self.send_response(200)
                 self.send_header("Content-Type", "text/plain")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
