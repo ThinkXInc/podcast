@@ -78,15 +78,45 @@ def find_media(outdir, ID, arg):
     if arg:
         p = pathlib.Path(arg)
         return p if p.is_absolute() else (outdir / arg)
-    # <ID>.<ext> 優先、無ければフォルダ内の最初のメディア（_orig/_trimmed と contents 配下は除く）
-    for ext in MEDIA_EXT:
-        cand = outdir / f"{ID}{ext}"
-        if cand.exists():
-            return cand
-    for f in sorted(outdir.glob("*")):
-        if f.suffix.lower() in MEDIA_EXT and "_orig" not in f.stem and "_trimmed" not in f.stem:
-            return f
-    return None
+    # 正本は data/<ID>/source/original.<ext>（固定名・不変。オーナー指示 2026-08-08）。
+    # 書き出し・render は常にこれを使う。無ければ一度だけ従来探索で特定し、
+    # APFSクローン（cp -c・容量ゼロ）で source/ に固定してから返す。
+    src_dir = pathlib.Path(outdir) / "source"
+    for f in sorted(src_dir.glob("original.*")):
+        return f
+    found = _discover_media(pathlib.Path(outdir), ID)
+    if found is None:
+        return None
+    try:
+        src_dir.mkdir(exist_ok=True)
+        pinned = src_dir / f"original{found.suffix.lower()}"
+        r = subprocess.run(["cp", "-c", str(found), str(pinned)])
+        if r.returncode != 0:
+            import shutil as _sh
+            _sh.copy2(found, pinned)
+        print(f"[media] 元音源を固定: {found.name} -> source/{pinned.name}")
+        return pinned
+    except OSError:
+        return found
+
+
+def _discover_media(outdir, ID):
+    """従来の自動探索（source/ 固定前の一度だけ使う）。書き出し物・退避物は拾わない。"""
+    import re as _re
+    export_name = _re.compile(_re.escape(ID) + r"_\d+_")
+    cands = [f for f in sorted(outdir.glob("*"))
+             if f.suffix.lower() in MEDIA_EXT
+             and "_orig" not in f.stem and "_trimmed" not in f.stem
+             and not export_name.match(f.name)]
+    if not cands:
+        return None
+    wavs = [f for f in cands if f.suffix.lower() == ".wav"]
+    if wavs:
+        return max(wavs, key=lambda f: f.stat().st_size)
+    exact = [f for f in cands if f.stem == ID]
+    if exact:
+        return exact[0]
+    return max(cands, key=lambda f: f.stat().st_size)
 
 
 def find_subtitles_ffmpeg():

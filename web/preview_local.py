@@ -164,6 +164,8 @@ video { width: 100%; max-width: 860px; display: block; border-radius: 6px;
 .toc-q { font-size:14px; color:#9ca3af; line-height:1.7; margin-left:10px; }
 .toc-sum { font-size:14px; line-height:1.8; margin:2px 0 4px 10px; opacity:.92; }
 .seg { scroll-margin-top:42px; }
+/* 全編セグメントは枠で区別する（オーナー指示・2026-08-08） */
+.seg.fullep { border: 3px solid #68000044; border-radius: 12px; }
 .editlink { font-size:13px; color:#6b7280; }
 """
 
@@ -277,6 +279,11 @@ var pxPerSec=parseFloat(localStorage.getItem('tl_pps'))||140;
 var insts=[];
 var hovered=null;   /* マウスが乗っているタイムライン。キー操作はここを最優先 */
 
+function fmtJp(t){
+  t=Math.round(t);
+  var h=Math.floor(t/3600), m=Math.floor((t%3600)/60), s=t%60;
+  return (h?h+'時間':'')+m+'分'+(s<10?'0':'')+s+'秒';
+}
 function fmtAbs(t){
   var h=Math.floor(t/3600), m=Math.floor((t%3600)/60), s=Math.floor(t%60);
   return (h?h+':':'')+((m<10&&h)?'0':'')+m+':'+(s<10?'0':'')+s;
@@ -285,6 +292,11 @@ function fmtAbs(t){
 function makeTimeline(root){
   var D=JSON.parse(root.querySelector('script[type="application/json"]').textContent);
   var keeps=complement(D.drops||[]);
+  /* 前回の保存がサーバーに届かないまま閉じた/リロードした形跡（dirty）を検知する。
+     自動では何も書き換えない。通知とボタンだけ出し、押されたときに限り復元する */
+  var hasUnsaved=false;
+  try{ hasUnsaved=!!(D.sid && localStorage.getItem('tl_dirty_'+D.sid)
+        && JSON.parse(localStorage.getItem('tl_journal_'+D.sid)||'[]').length); }catch(e){}
   var undoStack=[], redoStack=[], playhead=D.segStart, selKi=-1;
   var rows=[], laneW=0, built=false, saveTimer=null;
   var dragging=null, pendingDrag=null;
@@ -475,6 +487,10 @@ function makeTimeline(root){
     var kept=keeps.reduce(function(a,k){return a+(k[1]-k[0]);},0);
     var m=Math.floor(kept/60), s=Math.round(kept-m*60);
     if(elKeep) elKeep.textContent='残り尺 '+m+'分'+(s<10?'0':'')+s+'秒';
+    /* セグメント見出しの「元→編集後」もライブ更新する（静的なままだとバグに見える） */
+    var hd=document.getElementById('dur'+D.index);
+    if(hd){ var g=D.segEnd-D.segStart;
+      hd.textContent=(g-kept>1)?(fmtJp(g)+'→'+fmtJp(kept)):fmtJp(g); }
   }
   function movePlayhead(){
     rows.forEach(function(R){ if(R.play) R.play.style.display='none'; });
@@ -539,6 +555,7 @@ function makeTimeline(root){
     pd.done=true;
     if(action==='cut'){
       pushUndo();
+      lastOp='pend-cut:'+pd.cid;
       dropRange(pd.a, pd.b);
       keeps.sort(function(a,b){return a[0]-b[0];});
       selKi=-1; afterEdit();
@@ -552,16 +569,35 @@ function makeTimeline(root){
     fetch('/decide?id='+encodeURIComponent(D.id)+'&cid='+encodeURIComponent(pd.cid)
           +'&action='+action+'&status_only=1');
   }
+  var lastOp='';
   function pushUndo(){ undoStack.push(JSON.stringify(keeps)); if(undoStack.length>200)undoStack.shift(); redoStack=[]; }
   function afterEdit(){ renderBars(); styleWords(); movePlayhead(); scheduleSave(); }
   function setStatus(s){ if(elStat) elStat.textContent=s; }
-  function scheduleSave(){ setStatus('未保存'); clearTimeout(saveTimer); saveTimer=setTimeout(doSave,700); }
+  function journalNow(){
+    /* 操作の瞬間に、手元のローカルへ同期的に履歴を書く。これが唯一の必須処理。
+       サーバー送信は後追いで、失敗しても履歴は既にここに残っている */
+    try{ var k='tl_journal_'+D.sid, j=JSON.parse(localStorage.getItem(k)||'[]');
+         j.push({at:Date.now(),op:lastOp,drops:currentDrops()});
+         try{ localStorage.setItem(k,JSON.stringify(j)); }
+         catch(qe){ j=j.slice(Math.floor(j.length/2));
+                    try{ localStorage.setItem(k,JSON.stringify(j)); }catch(e2){} }
+         localStorage.setItem('tl_dirty_'+D.sid,'1');
+    }catch(e){}
+  }
+  function scheduleSave(){ journalNow(); setStatus('未保存'); clearTimeout(saveTimer); saveTimer=setTimeout(doSave,0); }
   function doSave(){
     setStatus('保存中…');
+    var rec={id:D.id,index:D.index,sid:D.sid,segStart:D.segStart,segEnd:D.segEnd,
+             op:lastOp,drops:currentDrops()};
+    lastOp='';
     fetch('/edit_save',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({id:D.id,index:D.index,drops:currentDrops()})})
-    .then(function(r){ setStatus(r.ok?'保存済み':'保存失敗'); })
-    .catch(function(){ setStatus('保存失敗'); });
+      body:JSON.stringify(rec)})
+    .then(function(r){
+      if(r.ok){ setStatus('保存済み'); try{ localStorage.removeItem('tl_dirty_'+D.sid); }catch(e){} }
+      else{ setStatus('保存失敗（3秒後に再送します）'); clearTimeout(saveTimer); saveTimer=setTimeout(doSave,3000); }
+    })
+    .catch(function(){ setStatus('サーバーに接続できません（3秒後に再送します）');
+      clearTimeout(saveTimer); saveTimer=setTimeout(doSave,3000); });
   }
   function splitAt(t){
     var ki=keeps.findIndex(function(k){return t>k[0]+MINW&&t<k[1]-MINW;});
@@ -570,6 +606,7 @@ function makeTimeline(root){
       return;
     }
     pushUndo(); var k=keeps[ki];
+    lastOp='split@'+t.toFixed(1);
     keeps.splice(ki,1,[k[0],t],[t,k[1]]); selKi=-1; afterEdit();
     setStatus('分割しました（端をドラッグするとカットできます）');
   }
@@ -679,7 +716,7 @@ function makeTimeline(root){
       var x=ev.clientX-R.strip.getBoundingClientRect().left, t=T(R,x);
       var sv=D.silence.find(function(v){return v[0]<=t&&t<v[1];});
       if(sv&&R.bars.some(function(b){return x>=b.x0&&x<=b.x1;})){
-        ev.preventDefault(); pushUndo(); dropRange(sv[0],sv[1]); selKi=-1; afterEdit();
+        ev.preventDefault(); pushUndo(); lastOp='dropSilence@'+sv[0].toFixed(1); dropRange(sv[0],sv[1]); selKi=-1; afterEdit();
       }
     });
     R.strip.addEventListener('mousedown',function(ev){
@@ -727,7 +764,7 @@ function makeTimeline(root){
   });
   document.addEventListener('mouseup',function(){
     if(pendingDrag) pendingDrag=null;
-    if(dragging){ dragging=null; scheduleSave(); }
+    if(dragging){ dragging=null; lastOp='trim'; scheduleSave(); }
   });
   host.addEventListener('click',function(ev){
     var el=ev.target.closest('.w'); if(!el) return;
@@ -746,16 +783,35 @@ function makeTimeline(root){
   if(ub) ub.onclick=function(){ selectInst(api); api.undo(); };
   if(rb) rb.onclick=function(){ selectInst(api); api.redo(); };
 
-  var api={ root:root, build:build, isBuilt:function(){return built;}, rebuild:function(){ if(built) build(); },
+  if(hasUnsaved){
+    setStatus('未保存の編集があります');
+    var rb=document.createElement('button');
+    rb.textContent='未保存の編集を復元';
+    rb.onclick=function(){
+      try{
+        var jj=JSON.parse(localStorage.getItem('tl_journal_'+D.sid)||'[]');
+        if(!jj.length){ setStatus('復元できる編集がありません'); return; }
+        pushUndo(); lastOp='restore-unsaved';
+        keeps=complement(jj[jj.length-1].drops||[]);
+        selKi=-1; afterEdit(); rb.remove();
+      }catch(e){ setStatus('復元に失敗しました'); }
+    };
+    var bar=root.querySelector('.tlbar');
+    if(bar) bar.appendChild(rb);
+  }
+  var api={ root:root, sid:D.sid,
+            state:function(){ return {id:D.id, sid:D.sid, index:D.index,
+              segStart:D.segStart, segEnd:D.segEnd, drops:currentDrops()}; },
+            build:build, isBuilt:function(){return built;}, rebuild:function(){ if(built) build(); },
             play:play, stop:stop,
             /* ⌘D: マウスが行の上にあればその位置、なければ再生位置で割る */
             splitAt:function(){ var t=(hoverT!=null)?hoverT:playhead;
               playhead=t; movePlayhead(); splitAt(t); },
             undo:function(){ if(!undoStack.length)return; redoStack.push(JSON.stringify(keeps));
-              keeps=JSON.parse(undoStack.pop()); selKi=-1; afterEdit(); },
+              keeps=JSON.parse(undoStack.pop()); selKi=-1; lastOp='undo'; afterEdit(); },
             redo:function(){ if(!redoStack.length)return; undoStack.push(JSON.stringify(keeps));
-              keeps=JSON.parse(redoStack.pop()); selKi=-1; afterEdit(); },
-            delSel:function(){ if(selKi<0) return; pushUndo(); keeps.splice(selKi,1); selKi=-1; afterEdit(); },
+              keeps=JSON.parse(redoStack.pop()); selKi=-1; lastOp='redo'; afterEdit(); },
+            delSel:function(){ if(selKi<0) return; pushUndo(); lastOp='delete'; keeps.splice(selKi,1); selKi=-1; afterEdit(); },
             dropSil:function(){ dropAllSilence(1.0); } };
   return api;
 }
@@ -811,6 +867,12 @@ document.querySelectorAll('.tl').forEach(function(root){
   },{rootMargin:'300px'});
   io.observe(root);
 });
+/* 書き出しは「ブラウザが今表示している状態」をそのまま使う（オーナー指示 2026-08-08。
+   サーバー保存値を参照すると、見ているものと書き出されるものがズレる余地が残るため） */
+window.tlState=function(sid){
+  for(var i=0;i<insts.length;i++){ if(insts[i].sid===sid) return insts[i].state(); }
+  return null;
+};
 var rsz=null;
 window.addEventListener('resize',function(){
   clearTimeout(rsz);
@@ -899,7 +961,7 @@ def timeline_block(idv, sg, tsegments, silence, main_spk=1, cutdecs=None, quotes
     # 文字列一致で単語インデックスの範囲を求めておく（表示は太字のみ・色は付けない）。
     hl = _quote_ranges(words, quotes or [])
 
-    data = json.dumps({"id": idv, "index": idx, "segStart": s, "segEnd": e,
+    data = json.dumps({"id": idv, "index": idx, "sid": sg.get("sid") or "", "segStart": s, "segEnd": e,
                        "drops": sg.get("drops") or [], "words": words, "silence": sil,
                        "mainSpk": main_spk, "pend": pend, "hl": hl},
                       ensure_ascii=False).replace("</", "<\\/")
@@ -932,6 +994,18 @@ def apply_timeline_save(payload):
     idv = str(payload.get("id") or "")
     if not idv or "/" in idv or idv.startswith("."):
         return False
+    # 受信した保存内容は成否に関わらず全部記録する（復元用の受信箱・2026-08-08）。
+    # 古いページの保存が拒否されても、ここに全編集データが残る。
+    try:
+        import datetime
+        inbox = os.path.join(idpaths.edit_dir(os.path.join(DATA_DIR, idv)), "save_inbox.jsonl")
+        with open(inbox, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"at": datetime.datetime.now().isoformat(timespec="milliseconds"),
+                                "payload": payload}, ensure_ascii=False) + "\n")
+            f.flush()
+            os.fsync(f.fileno())   # ここがジャーナルの正本。適用より先に必ずディスクへ書き切る
+    except Exception:
+        pass
     base = os.path.join(DATA_DIR, idv)
     seg_path = idpaths.find(base, "segments.json")
     if not os.path.isfile(seg_path):
@@ -940,19 +1014,34 @@ def apply_timeline_save(payload):
         idx = int(payload.get("index"))
     except (TypeError, ValueError):
         return False
+    sid = str(payload.get("sid") or "")
     seg = _load_json(seg_path, {})
     changed = False
     for sg in seg.get("segments", []):
-        if sg.get("index") != idx:
+        # 対応づけは sid が正（index は細分化・並べ替えで変わるため。2026-08-08）。
+        # sid が無い旧データだけ index で引く。
+        if sid and sg.get("sid"):
+            if sg["sid"] != sid:
+                continue
+        elif sg.get("index") != idx:
             continue
-        s, e = sg["start_sec"], sg["end_sec"]
+        # 保存は受け取ったまま書く。切り詰め・範囲外破棄はしない（オーナー指示 2026-08-08。
+        # 整形はデータを壊すだけで意味がない。範囲の解釈は表示・書き出し側が読むときに行う）。
+        # sid が無い旧ページの index 指定だけは、誤セグメント書き込み防止に区間一致を要求する。
+        if not (sid and sg.get("sid") == sid):
+            try:
+                ps, pe = float(payload.get("segStart")), float(payload.get("segEnd"))
+            except (TypeError, ValueError):
+                return False
+            if abs(ps - float(sg["start_sec"])) > 0.5 or abs(pe - float(sg["end_sec"])) > 0.5:
+                return False
         clean = []
         for d in payload.get("drops") or []:
             try:
-                a, b = max(float(d[0]), s), min(float(d[1]), e)
+                a, b = float(d[0]), float(d[1])
             except (TypeError, ValueError, IndexError):
-                continue
-            if b - a > 0.01:
+                return False
+            if b > a:
                 clean.append([round(a, 3), round(b, 3)])
         sg["drops"] = sorted(clean)
         changed = True
@@ -1016,17 +1105,27 @@ def page(title, body):
         "function decide(cid,action){var idv=new URLSearchParams(location.search).get('id');"
         "fetch('/decide?id='+encodeURIComponent(idv)+'&cid='+cid+'&action='+action)"
         ".then(function(){location.reload();});}"
-        # 「この編集で書き出す」: render.py を1セグメントだけ走らせ、終わったらリロード
-        "function renderSeg(idx){var idv=new URLSearchParams(location.search).get('id');"
+        # 「この編集で書き出す」: 完了したらそのままダウンロードが落ちてくる
+        "function renderSeg(sid,idx,dn){var idv=new URLSearchParams(location.search).get('id');"
         "var el=document.getElementById('rst'+idx);"
-        "fetch('/render_seg?id='+encodeURIComponent(idv)+'&index='+idx).then(function(r){return r.text();})"
+        "var st=window.tlState?window.tlState(sid):null;"
+        "if(!st){el.textContent='タイムラインの状態を取得できません（リロードしてください）';return;}"
+        "if(dn)st.denoise=true;"
+        "fetch('/render_seg',{method:'POST',headers:{'Content-Type':'application/json'},"
+        "body:JSON.stringify(st)}).then(function(r){return r.text();})"
         ".then(function(st){if(st!=='started'&&st!=='already_running'){el.textContent='開始できません: '+st;return;}"
         "el.textContent='書き出し中…（数分かかります。ページを開いたままで）';"
         "var iv=setInterval(function(){"
-        "fetch('/render_status?id='+encodeURIComponent(idv)+'&index='+idx).then(function(r){return r.text();})"
-        ".then(function(s){if(s==='done'){clearInterval(iv);el.textContent='完了。再読み込みします…';location.reload();}"
+        "fetch('/render_status?id='+encodeURIComponent(idv)+'&sid='+encodeURIComponent(sid)).then(function(r){return r.text();})"
+        ".then(function(s){if(s.indexOf('running:')===0){el.textContent='書き出し中… '+s.slice(8)+'%';}"
+        "else if(s.indexOf('done')===0){clearInterval(iv);"
+        "var fn=s.length>5?s.slice(5):'';"
+        "if(fn){var a=document.createElement('a');"
+        "a.href='/media?p='+encodeURIComponent(idv+'/contents/'+fn);"
+        "a.download=fn;document.body.appendChild(a);a.click();a.remove();"
+        "el.textContent='完了: '+fn;}else{el.textContent='完了';}}"
         "else if(s.indexOf('failed')===0){clearInterval(iv);"
-        "el.textContent='書き出し失敗（generated/render_'+idx+'.log を確認）';}});},5000);});}"
+        "el.textContent='書き出し失敗（generated/render_'+sid+'.log を確認）';}});},2000);});}"
         # 再生中の箇所の背景ハイライト
         "document.addEventListener('timeupdate',function(e){var el=e.target,sel,attr;"
         "if(el.tagName==='VIDEO'){sel=\"[data-v='\"+el.id+\"']\";attr='data-t';}"
@@ -1095,13 +1194,12 @@ def id_status(idv):
     pending = sum(1 for c in cuts if c.get("status") == "pending")
     decided = sum(1 for c in cuts if c.get("status") in ("cut", "keep"))
     has_drop = any(sg.get("drops") for sg in segs)
-    if not segs:
+    started = has_drop or decided   # カット記録が最低1つ＝編集に着手（オーナー指示 2026-08-09）
+    if not segs or not started:
         return "done0", "処理済み"
     if pending:
         return "wip", "編集中"
-    if decided or has_drop:
-        return "done", "編集済み"
-    return "done0", "処理済み"
+    return "done", "編集済み"
 
 
 def list_segments(idv):
@@ -1119,19 +1217,22 @@ def seg_dirname(idv, index, title):
     return None
 
 
-def seg_audio_name(idv, index):
-    """export_audio.py が書く {ID}_{INDEX}_{TITLE}.m4a を contents/ 直下から探す。
+def seg_audio_names(idv, index):
+    """export_audio.py が書く {ID}_{INDEX}_{TITLE}{尺}{yymmddHHMM}.m4a を contents/ 直下から
+    新しい順に全部返す（ファイル名でバージョンが分かれる・2026-08-08）。
     macOS はファイル名の Unicode 正規化（NFC/NFD）が混在するので、比較は NFC に揃える。"""
     import unicodedata
     cdir = os.path.join(DATA_DIR, idv, "contents")
     if not os.path.isdir(cdir):
-        return None
+        return []
     prefix = unicodedata.normalize("NFC", f"{idv}_{index}_")
-    for n in sorted(os.listdir(cdir)):
+    out = []
+    for n in os.listdir(cdir):
         nn = unicodedata.normalize("NFC", n)
-        if nn.startswith(prefix) and nn.endswith(".m4a"):
-            return n
-    return None
+        if nn.startswith(prefix) and nn.endswith(".m4a") and not nn.endswith(".part.m4a"):
+            out.append(n)
+    out.sort(key=lambda n: os.path.getmtime(os.path.join(cdir, n)), reverse=True)
+    return out
 
 
 def load_id_data(idv):
@@ -1573,16 +1674,25 @@ def render_id(idv):
     def seg_order(sg):
         rt = d["ratings_by_index"].get(sg.get("index"))
         stars = float(rt["stars"]) if rt and rt.get("stars") is not None else 1.5
-        return (-stars, sg.get("index", 0))
+        is_full = "全編" in (sg.get("title") or "")
+        # 全編を必ず先頭に（オーナー指示 2026-08-09）。残りは★順→番号順
+        return (0 if is_full else 1, -stars, sg.get("index", 0))
     ordered = sorted(segments, key=seg_order)
 
     # 目次: タイトル・尺・オーナー評価(★と根拠)を縦に並べる
+    def _jp(sec):
+        m, s = divmod(int(round(sec)), 60)
+        h, m = divmod(m, 60)
+        return f"{h}時間{m}分{s}秒" if h else f"{m}分{s:02d}秒"
+
     def dur_jp_of(sg):
+        """尺は「元→編集後」で出す（例: 49分43秒→25分21秒）。カットが無ければ元だけ。"""
         s0, e0 = sg["start_sec"], sg["end_sec"]
-        dsec = sum(min(d1, e0) - max(d0, s0) for d0, d1 in (sg.get("drops") or []))
-        dm0, ds0 = divmod(int(round((e0 - s0) - dsec)), 60)
-        dh0, dm0 = divmod(dm0, 60)
-        return f"{dh0}時間{dm0}分{ds0}秒" if dh0 else f"{dm0}分{ds0}秒"
+        gross = e0 - s0
+        dsec = sum(max(0.0, min(d1, e0) - max(d0, s0)) for d0, d1 in (sg.get("drops") or []))
+        if dsec < 1:
+            return _jp(gross)
+        return f"{_jp(gross)}→{_jp(gross - dsec)}"
 
     toc = []
     for sg in ordered:
@@ -1594,7 +1704,8 @@ def render_id(idv):
             st_html = f"　<span class='stars'>{'★' * st_n}{'☆' * (5 - st_n)}</span>"
             if rt.get("quote"):  # 理由を述べた評価だけ根拠が入っている（直接指定は空）
                 st_html += f"　<span class='rq'>「{esc(rt['quote'])}」</span>"
-        toc.append(f"<div class='toc-item'><a href='#seg{i}'>{i} {esc(sg.get('title') or '')}</a>"
+        _lbl = "＊" if "全編" in (sg.get("title") or "") else str(i)
+        toc.append(f"<div class='toc-item'><a href='#seg{i}'>{_lbl} {esc(sg.get('title') or '')}</a>"
                    f"　{dur_jp_of(sg)}{st_html}</div>")
         # 要約（現在の切り出し内容ベース）→ ハイライト原文 の順に下へ並べる
         tcand = d["cand_by_title"].get(sg.get("title"))
@@ -1611,8 +1722,9 @@ def render_id(idv):
         cand = d["cand_by_title"].get(title)
         s, e = sg["start_sec"], sg["end_sec"]
         drops = sg.get("drops") or []
-        drop_sec = sum(min(d1, e) - max(d0, s) for d0, d1 in drops)
+        drop_sec = sum(max(0.0, min(d1, e) - max(d0, s)) for d0, d1 in drops)
         dur = (e - s) - drop_sec
+        gross = e - s
 
         regions, todo, facts = build_regions(sg, cand, d["fact_checks"], d["exclude_zones"],
                                              d["cut_speakers"], d["cut_manual"], d["tsegments"],
@@ -1623,7 +1735,8 @@ def render_id(idv):
         gaps = [g for g in (silseg or {}).get("gaps", [])
                 if g.get("flag") != "likely_dropped" and g.get("duration", 0) >= 1.5]
 
-        parts.append(f"<div class='seg' id='seg{idx}'>")
+        _full = "全編" in (title or "")
+        parts.append(f"<div class='seg{' fullep' if _full else ''}' id='seg{idx}'>")
         rank = cand.get("rank") if cand else None
         # オーナー評価（★5段階＋根拠の発言を併記。分割したら評価はリセットされる）
         rt = d["ratings_by_index"].get(idx)
@@ -1637,21 +1750,18 @@ def render_id(idv):
             rate_html += "</div>"
         else:
             rate_html = "<div class='rating unrated'><b>オーナー評価:</b> ☆☆☆☆☆ 未評価</div>"
-        dm, ds = divmod(int(round(dur)), 60)
-        dh, dm = divmod(dm, 60)
-        dur_jp = (f"{dh}時間{dm}分{ds}秒" if dh else f"{dm}分{ds}秒")
+        def _jp2(sec):
+            m2, s2 = divmod(int(round(sec)), 60)
+            h2, m2 = divmod(m2, 60)
+            return f"{h2}時間{m2}分{s2}秒" if h2 else f"{m2}分{s2:02d}秒"
+        dur_jp = _jp2(gross) if drop_sec < 1 else f"{_jp2(gross)}→{_jp2(dur)}"
         parts.append(
             "<div class='seghd'>"
-            f"<h2><span class='rank'>{idx}</span>　{esc(title)}</h2>"
+            f"<h2><span class='rank'>{'＊' if _full else idx}</span>　{esc(title)}</h2>"
             + rate_html +
-            f"<div class='meta'>{dur_jp} [{fmt_time(s)}〜{fmt_time(e)}]</div></div>"
+            f"<div class='meta'><span id='dur{idx}'>{dur_jp}</span> [{fmt_time(s)}〜{fmt_time(e)}]</div></div>"
         )
 
-        aud = seg_audio_name(idv, idx)
-        if aud:
-            u = "/media?p=" + urllib.parse.quote(f"{idv}/contents/{aud}")
-            parts.append(f"<audio src='{u}' controls preload='metadata' style='width:100%'></audio>")
-            parts.append(f"<div class='dl'><a href='{u}' download>{esc(aud)}</a></div>")
         if segfolder and os.path.isfile(os.path.join(DATA_DIR, idv, "contents", segfolder, "final.mp4")):
             parts.append(f"<video id='vid{idx}' src='{media_url(idv, segfolder, 'final.mp4')}' controls preload='metadata'></video>")
             links = [f"<a href='{media_url(idv, segfolder, fn)}'>{esc(lb)}</a>"
@@ -1659,10 +1769,13 @@ def render_id(idv):
                      if os.path.isfile(os.path.join(DATA_DIR, idv, "contents", segfolder, fn))]
             if links:
                 parts.append("<div class='dl'>" + "".join(links) + "</div>")
+        # ボタンは1つ。完了したらブラウザのダウンロードとして自動で落ちてくる
+        # （リンク列・プレーヤーは出さない。オーナー指示・2026-08-08）
+        _sid = sg.get("sid") or ""
         parts.append(
-            f"<p class='meta'><button onclick='renderSeg({idx})'>"
-            + ("この編集で書き出し直す（m4a）" if aud else "この編集で書き出す（m4a）")
-            + f"</button>　<span id='rst{idx}' class='meta'></span></p>")
+            f"<p class='meta'><button onclick=\"renderSeg('{_sid}',{idx},0)\">この編集で書き出す（m4a）</button>"
+            f"　<button onclick=\"renderSeg('{_sid}',{idx},1)\">最終版で書き出す（ノイズ除去・数分）</button>"
+            f"　<span id='rst{idx}' class='meta'></span></p>")
 
         # 要約: segments.json の summary（現在の切り出し内容から作り直したもの）を優先。
         # レビューは表示しない。見出しラベルも付けず本文だけ。
@@ -1736,12 +1849,58 @@ def apply_decision(idv, cid, action, status_only=False):
 RENDERS = {}
 
 
-def start_render(idv, index):
-    """render.py を1セグメントだけバックグラウンドで走らせる。"""
-    import subprocess
-    if idv not in list_ids():
+def _seg_index_by_sid(idv, sid):
+    seg = _load_json(idpaths.find(os.path.join(DATA_DIR, idv), "segments.json"), {})
+    for sg in seg.get("segments", []):
+        if sg.get("sid") == sid:
+            return sg.get("index")
+    return None
+
+
+def start_render_spec(spec):
+    """ブラウザが表示している状態（sid・区間・全カット）をそのまま書き出す。
+    segments.json は参照しない＝見ているもの以外が書き出されることは構造的にない。"""
+    import subprocess, datetime
+    idv = str(spec.get("id") or "")
+    sid = str(spec.get("sid") or "")
+    if idv not in list_ids() or not sid:
         return "bad_id"
-    key = (idv, index)
+    # 何を書き出したかも受信箱へ完全記録
+    try:
+        inbox = os.path.join(idpaths.edit_dir(os.path.join(DATA_DIR, idv)), "save_inbox.jsonl")
+        with open(inbox, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"at": datetime.datetime.now().isoformat(timespec="milliseconds"),
+                                "payload": dict(spec, op="export")}, ensure_ascii=False) + "\n")
+            f.flush(); os.fsync(f.fileno())
+    except Exception:
+        pass
+    key = (idv, sid)
+    p = RENDERS.get(key)
+    if p is not None and p.poll() is None:
+        return "already_running"
+    gen = idpaths.gen_dir(os.path.join(DATA_DIR, idv))
+    specp = os.path.join(gen, f"export_spec_{sid}.json")
+    with open(specp, "w", encoding="utf-8") as f:
+        json.dump(spec, f, ensure_ascii=False)
+    root = os.path.dirname(HERE)
+    py = os.path.join(root, "venv", "bin", "python")
+    if not os.path.isfile(py):
+        py = _sys.executable
+    logf = open(os.path.join(gen, f"render_{sid}.log"), "w", encoding="utf-8")
+    cmd = [py, os.path.join(root, "scripts", "export_audio.py"), idv, "--spec", specp]
+    if spec.get("denoise"):
+        cmd.append("--denoise")
+    RENDERS[key] = subprocess.Popen(cmd, cwd=root, stdout=logf, stderr=subprocess.STDOUT)
+    return "started"
+
+
+def start_render(idv, sid):
+    """export_audio.py を1セグメントだけバックグラウンドで走らせる。
+    対応づけは sid（index は細分化で変わるため。2026-08-08）。"""
+    import subprocess
+    if idv not in list_ids() or _seg_index_by_sid(idv, sid) is None:
+        return "bad_id"
+    key = (idv, sid)
     p = RENDERS.get(key)
     if p is not None and p.poll() is None:
         return "already_running"
@@ -1750,22 +1909,42 @@ def start_render(idv, index):
     if not os.path.isfile(py):
         py = _sys.executable
     logdir = idpaths.gen_dir(os.path.join(DATA_DIR, idv))
-    logf = open(os.path.join(logdir, f"render_{index}.log"), "w", encoding="utf-8")
-    # 書き出しは mp3（{ID}_{INDEX}_{TITLE}.mp3・オーナー指示 2026-08-05）。
-    # 動画や字幕が要るときは render.py を手で実行する。
+    logf = open(os.path.join(logdir, f"render_{sid}.log"), "w", encoding="utf-8")
     RENDERS[key] = subprocess.Popen(
-        [py, os.path.join(root, "scripts", "export_audio.py"), idv, "--index", str(index)],
+        [py, os.path.join(root, "scripts", "export_audio.py"), idv, "--sid", sid],
         cwd=root, stdout=logf, stderr=subprocess.STDOUT)
     return "started"
 
 
-def render_status(idv, index):
-    p = RENDERS.get((idv, index))
+def render_status(idv, sid):
+    p = RENDERS.get((idv, sid))
     if p is None:
         return "none"
     if p.poll() is None:
-        return "running"
-    return "done" if p.returncode == 0 else f"failed({p.returncode})"
+        # export_audio.py が書く進捗ファイルから % を返す
+        try:
+            gen = idpaths.gen_dir(os.path.join(DATA_DIR, idv))
+            meta = json.load(open(os.path.join(gen, f"export_progress_{sid}.json")))
+            txt = open(os.path.join(gen, f"export_progress_{sid}.txt")).read()
+            us = [ln.split("=")[1] for ln in txt.splitlines() if ln.startswith("out_time_us=")]
+            done = (int(us[-1]) / 1e6) if us else 0.0
+            net = max(0.1, float(meta.get("net") or 0.1))
+            stage = meta.get("stage")
+            if stage == 1:
+                pct = min(45, int(done / net * 45))
+            elif stage == 2:
+                pct = 55   # ノイズ除去中（進捗が取れないので固定表示）
+            else:
+                pct = min(99, 70 + int(min(29, done / net * 29)))
+            return f"running:{pct}"
+        except Exception:
+            return "running"
+    if p.returncode != 0:
+        return f"failed({p.returncode})"
+    # 完了したら最新の書き出しファイル名を返す。ページ側はこれで自動ダウンロードさせる
+    index = _seg_index_by_sid(idv, sid)
+    names = seg_audio_names(idv, index) if index is not None else []
+    return "done:" + names[0] if names else "done"
 
 
 def safe_media_path(p):
@@ -1805,18 +1984,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
-            elif route == "/render_seg":
-                st = start_render((qs.get("id") or [""])[0],
-                                  int((qs.get("index") or ["0"])[0]))
-                data = st.encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "text/plain")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
             elif route == "/render_status":
                 st = render_status((qs.get("id") or [""])[0],
-                                   int((qs.get("index") or ["0"])[0]))
+                                   (qs.get("sid") or [""])[0])
                 data = st.encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain")
@@ -1841,6 +2011,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/render_seg":
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                spec = json.loads(self.rfile.read(n).decode("utf-8")) if n else {}
+                st = start_render_spec(spec)
+            except Exception:
+                st = "bad_request"
+            data = st.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         ok = False
         if parsed.path == "/edit_save":
             try:

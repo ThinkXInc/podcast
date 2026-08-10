@@ -42,6 +42,9 @@ GENERATED_CONTAINS = ("_校正用",)
 
 EDIT_DIR = "edit"
 GEN_DIR = "generated"
+# experiments/ … 試行の産物（A/B試聴サンプル等）。generated を散らかさないための置き場
+#                （オーナー指示 2026-08-10）。パイプラインは読まない
+EXP_DIR = "experiments"
 
 
 def subdir_for(name):
