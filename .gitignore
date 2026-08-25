@@ -23,3 +23,5 @@ id_*
 
 # ブラウザ再生用の派生音源（元音源から再生成できる）
 preview_audio.m4a
+checkpoints/
+venv_enhance/
