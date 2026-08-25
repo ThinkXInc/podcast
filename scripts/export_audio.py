@@ -109,25 +109,15 @@ def main():
         stamp = datetime.datetime.now().strftime("%y%m%d%H%M")
         # 処理パラメータをファイル名に記録する（オーナー指示 2026-08-10）。
         # 例: …_最終_NR-MossFormer2_SE_48K_aac_at-256k_25分48秒2608101012.m4a
-        nr_mix = float(os.environ.get("PODCAST_NR_MIX", "0.3"))   # 除去のブレンド比（既定30%＝かなり弱く）
-        params = (f"最終_NR{int(nr_mix*100)}-MossFormer2_SE_48K_" if denoise else "") + f"{enc}-256k"
+        nr_mix = float(os.environ.get("PODCAST_NR_MIX", "0.3"))   # 除去のブレンド比
+        # パラメータ表記は試聴サンプルと同じ形式（例: MossFormer2_amix0.30）
+        params = (f"MossFormer2_amix{nr_mix:.2f}_" if denoise else "") + f"{enc}-256k"
         out = contents / (f"{ID}_{idx}_{safe_name(seg.get('title'))}_{params}_"
                           f"{net_sec//60}分{net_sec%60:02d}秒{stamp}.m4a")
 
-        # 区間ごとの並列トリム＋concat は区間数が多い（数十）と黙って途中で切れる
-        # 実害が出た（2026-08-08: 67区間で25:59指定→7:42しか出ない）ため、
-        # 区間数に依存しない単一チェーンの aselect 方式にする
-        expr = "+".join(f"between(t\,{a:.3f}\,{b:.3f})" for a, b in keeps)
-        # 先頭の asetpts で t をサンプル数から作り直す。元ファイルのPTSが壊れていても
-        # （AAC入りWAV等）選択判定が狂わない
-        af = f"asetpts=N/SR/TB,aselect='{expr}',asetpts=N/SR/TB"
-        # 二段方式: まずフィルタ結果を素のPCMに書き切り、それをエンコードする。
-        # フィルタ出力を直接 aac_at に繋ぐと、PTSの壊れた入力で途中終了する実害があった
-        # （2026-08-08: 67区間 25:59指定→4:18しか出ない）。エンコーダには常に
-        # クリーンな中間WAVだけを見せる
-        tmp = out.with_name(out.name + ".part.m4a")
-        pcm = out.with_name(out.name + ".part.wav")
-        # 進捗ファイル（サイトが % 表示に使う）。spec 経由のときだけ書く
+        # 切り出しは「区間ごとに抽出 → 無劣化連結」。区間数に上限がない
+        # （aselect 単一式は約100区間で式パーサが破綻する実害があった 2026-08-10。
+        #   並列atrim+concatも数十区間で黙って途中終了する実害があった）
         prog_txt = prog_json = None
         if args.spec:
             sp = pathlib.Path(args.spec)
@@ -140,21 +130,41 @@ def main():
             if prog_json:
                 prog_json.write_text(json.dumps({"stage": n, "net": net_total}))
 
+        def _tick(done_sec):
+            if prog_txt:
+                with open(prog_txt, "a") as f:
+                    f.write(f"out_time_us={int(done_sec * 1e6)}\n")
+
         def _prog_args():
             return ["-progress", str(prog_txt), "-stats_period", "0.5"] if prog_txt else []
-        try:
+
+        tmp = out.with_name(out.name + ".part.m4a")
+        pcm = out.with_name(out.name + ".part.wav")
+        dn = None
+        import tempfile
+        with tempfile.TemporaryDirectory(dir=str(contents)) as td:
+            tdp = pathlib.Path(td)
             _stage(1)
-            subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
-                           + _prog_args() +
-                           ["-i", str(media), "-af", af,
-                            "-c:a", "pcm_s16le", str(pcm)], check=True)
+            listf = tdp / "list.txt"
+            done = 0.0
+            with open(listf, "w") as lf:
+                for i, (a, b) in enumerate(keeps):
+                    part = tdp / f"p{i:04d}.wav"
+                    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                                    "-ss", f"{a:.3f}", "-to", f"{b:.3f}", "-i", str(media),
+                                    "-c:a", "pcm_s16le", str(part)], check=True)
+                    lf.write(f"file '{part.name}'\n")
+                    done += b - a
+                    _tick(done)
+            subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                            "-f", "concat", "-safe", "0", "-i", str(listf),
+                            "-c", "copy", str(pcm)], check=True)
+        try:
             enc_src = pcm
-            dn = None
             if denoise:
-                # 最終版のみ: MossFormer2_SE_48K（ClearerVoice）でノイズ除去。
-                # 品質最優先（オーナー指示）。専用venvで実行し、失敗したら書き出し自体を失敗にする
+                # ノイズ除去（MossFormer2_SE_48K）→ 元と nr_mix でブレンド
                 _stage(2)
-                dn = out.with_name(out.name + ".dn.wav")
+                dnr = out.with_name(out.name + ".dn.wav")
                 enh_py = HERE / "venv_enhance" / "bin" / "python"
                 code = (
                     "import sys\n"
@@ -162,15 +172,14 @@ def main():
                     "cv = ClearVoice(task='speech_enhancement', model_names=['MossFormer2_SE_48K'])\n"
                     "o = cv(input_path=sys.argv[1], online_write=False)\n"
                     "cv.write(o, output_path=sys.argv[2])\n")
-                subprocess.run([str(enh_py), "-c", code, str(pcm), str(dn)], check=True)
-                # 除去100%は強すぎる（オーナー指示 2026-08-10）。除去後を nr_mix、元を (1-nr_mix) でブレンド
+                subprocess.run([str(enh_py), "-c", code, str(pcm), str(dnr)], check=True)
                 mixed = out.with_name(out.name + ".mix.wav")
                 subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                                "-i", str(pcm), "-i", str(dn), "-filter_complex",
+                                "-i", str(pcm), "-i", str(dnr), "-filter_complex",
                                 f"[0:a]volume={1-nr_mix:.2f}[a];[1:a]volume={nr_mix:.2f}[b];"
                                 f"[a][b]amix=inputs=2:normalize=0",
                                 "-c:a", "pcm_s16le", str(mixed)], check=True)
-                dn.unlink(missing_ok=True)
+                dnr.unlink(missing_ok=True)
                 dn = mixed
                 enc_src = dn
             _stage(3)

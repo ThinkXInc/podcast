@@ -643,7 +643,9 @@ function makeTimeline(root){
     playhead=audio.currentTime; movePlayhead(); highlight(playhead);
     requestAnimationFrame(tick);
   }
+  function applyRate(){ try{ audio.playbackRate=parseFloat(localStorage.getItem('tl_rate')||'1'); }catch(e){} }
   function play(){
+    applyRate();
     if(!audio){ setStatus('元音源がありません'); return; }
     if(active&&active!==api) active.stop();
     if(!inKeep(playhead)){
@@ -779,6 +781,14 @@ function makeTimeline(root){
   if(zo) zo.onclick=function(){ setZoomAll(pxPerSec/1.4); };
   /* 「無音を一括で落とす」ボタンは廃止（オーナー指示・2026-08-05。
      一括操作は編集を全部飛ばす危険があるため。黄帯のダブルクリックで1箇所ずつは残す） */
+  var sp=root.querySelector('.tlspeed');
+  if(sp){
+    sp.value=localStorage.getItem('tl_rate')||'1';
+    sp.onchange=function(){ localStorage.setItem('tl_rate',sp.value);
+      if(audio) audio.playbackRate=parseFloat(sp.value);
+      /* 他のタイムラインのプルダウン表示も同期 */
+      document.querySelectorAll('.tlspeed').forEach(function(s){ s.value=sp.value; }); };
+  }
   var ub=root.querySelector('.tlundo'), rb=root.querySelector('.tlredo');
   if(ub) ub.onclick=function(){ selectInst(api); api.undo(); };
   if(rb) rb.onclick=function(){ selectInst(api); api.redo(); };
@@ -974,6 +984,8 @@ def timeline_block(idv, sg, tsegments, silence, main_spk=1, cutdecs=None, quotes
         "<span class='tltime'>0:00.00</span>"
         "<span class='tlkeep'></span>"
         "<button class='tlzout'>−</button><button class='tlzin'>＋</button>"
+        "<select class='tlspeed'><option value='1'>1x</option>"
+        "<option value='1.35'>1.35x</option><option value='1.5'>1.5x</option></select>"
         "<span class='tlzoom'></span>"
         "<button class='tlundo'>↩ 元に戻す</button><button class='tlredo'>↪ やり直す</button>"
         "<span class='tlstat'>保存済み</span>"
@@ -1106,11 +1118,16 @@ def page(title, body):
         "fetch('/decide?id='+encodeURIComponent(idv)+'&cid='+cid+'&action='+action)"
         ".then(function(){location.reload();});}"
         # 「この編集で書き出す」: 完了したらそのままダウンロードが落ちてくる
-        "function renderSeg(sid,idx,dn){var idv=new URLSearchParams(location.search).get('id');"
+        "function nrToggle(cb){localStorage.setItem('nr_on',cb.checked?'1':'0');"
+        "document.querySelectorAll('.nrtoggle').forEach(function(c){c.checked=cb.checked;});}"
+        "document.addEventListener('DOMContentLoaded',function(){"
+        "var on=localStorage.getItem('nr_on')==='1';"
+        "document.querySelectorAll('.nrtoggle').forEach(function(c){c.checked=on;});});"
+        "function renderSeg(sid,idx){var idv=new URLSearchParams(location.search).get('id');"
         "var el=document.getElementById('rst'+idx);"
         "var st=window.tlState?window.tlState(sid):null;"
         "if(!st){el.textContent='タイムラインの状態を取得できません（リロードしてください）';return;}"
-        "if(dn)st.denoise=true;"
+        "if(localStorage.getItem('nr_on')==='1')st.denoise=true;"
         "fetch('/render_seg',{method:'POST',headers:{'Content-Type':'application/json'},"
         "body:JSON.stringify(st)}).then(function(r){return r.text();})"
         ".then(function(st){if(st!=='started'&&st!=='already_running'){el.textContent='開始できません: '+st;return;}"
@@ -1773,8 +1790,8 @@ def render_id(idv):
         # （リンク列・プレーヤーは出さない。オーナー指示・2026-08-08）
         _sid = sg.get("sid") or ""
         parts.append(
-            f"<p class='meta'><button onclick=\"renderSeg('{_sid}',{idx},0)\">この編集で書き出す（m4a）</button>"
-            f"　<button onclick=\"renderSeg('{_sid}',{idx},1)\">最終版で書き出す（ノイズ除去・数分）</button>"
+            f"<p class='meta'><button onclick=\"renderSeg('{_sid}',{idx})\">この編集で書き出す（m4a）</button>"
+            f"　<label><input type='checkbox' class='nrtoggle' onchange='nrToggle(this)'> ノイズ除去</label>"
             f"　<span id='rst{idx}' class='meta'></span></p>")
 
         # 要約: segments.json の summary（現在の切り出し内容から作り直したもの）を優先。
