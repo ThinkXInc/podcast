@@ -17,6 +17,9 @@ Claude Code への想定運用:
 """
 import os, sys, json, pathlib, argparse
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import idpaths  # data/<ID>/ のファイル配置は idpaths が唯一の定義（D-002 改定）
+
 HERE = pathlib.Path(__file__).resolve().parents[1]
 
 
@@ -69,7 +72,7 @@ def main():
 
     paths = load_conf("config/paths.conf")
     outdir = pathlib.Path(paths["PODCAST_ROOT"]) / args.id
-    pdf = outdir / f"{args.id}_校正用.pdf"
+    pdf = pathlib.Path(idpaths.find(str(outdir), f"{args.id}_校正用.pdf"))
     if not pdf.exists():
         sys.exit(f"{pdf} がありません。先に make_review_pdf.py を実行してください。")
 
@@ -80,7 +83,7 @@ def main():
     else:
         pages = parse_pages(args.pages, total)
 
-    preview = outdir / "preview"
+    preview = pathlib.Path(idpaths.gen_dir(str(outdir))) / "preview"
     preview.mkdir(exist_ok=True)
     # 既存PNGは消してから（古い結果が混ざらないように）
     for old in preview.glob("p*.png"):

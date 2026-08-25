@@ -23,6 +23,22 @@ trim_plan.json 形式:
 import os, sys, json, shutil, subprocess, pathlib
 
 HERE = pathlib.Path(__file__).resolve().parents[1]
+import sys as _sys
+_sys.path.insert(0, str(HERE / "scripts"))
+import idpaths  # data/<ID>/ のファイル配置は idpaths が唯一の定義（D-002 改定）
+
+
+def P(outdir, name):
+    """読み書き両用のパス解決。読むときは新旧どちらでも見つかる。"""
+    import pathlib
+    return pathlib.Path(idpaths.find(str(outdir), name))
+
+
+def PW(outdir, name):
+    import pathlib
+    return pathlib.Path(idpaths.save(str(outdir), name))
+
+
 
 
 def load_paths():
@@ -97,7 +113,7 @@ def main():
         print(f"[trim] メディアが見つかりません: {media}")
         sys.exit(1)
 
-    plan_p = outdir / "trim_plan.json"
+    plan_p = P(outdir, "trim_plan.json")
     if not plan_p.exists():
         print(f"[trim] {plan_p} が無い。detect_silence.py の結果を見て Claude が判断・作成すること。")
         sys.exit(1)

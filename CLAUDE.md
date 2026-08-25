@@ -150,3 +150,26 @@ GPTが各候補に出した `cuts`（カット推奨）は、原則カットす�
 ## やらないこと
 - ブラウザのChatGPT/GPT Proを自動操作しようとしない（APIのGPT-5.5を使う）。
 - YouTubeへの自動アップロードは現状スコープ外（将来追加可）。完成後リンク手順は案内してよい。
+
+## data/<ID>/ の中の配置（D-025）
+
+配置の定義は `scripts/idpaths.py` の1箇所にある。ファイルを増やすときはそこに足す。
+
+```
+data/<ID>/
+  ├ 元音源.m4a / 元動画.mp4        ← オーナーが入れたもの。触らない
+  ├ *-transcript.pdf / *-transcript*.txt  ← Notta の全文（話者ラベルの元）
+  ├ *-要約.pdf / *-要約.txt         ← Notta の要約
+  ├ 編集メモ.md                     ← 編集指示ログ（D-001）
+  ├ edit/        人の判断が入ったもの。消すと手作業がやり直しになる
+  │   segments.json  cut_decisions.json  ratings.json  cutlist.json  trim_plan.json
+  ├ generated/   機械が作ったもの。消しても作り直せる
+  │   transcript.json/.txt  vad.json  silences.json  candidates_*.json
+  │   exclude_zones*.json  transcript_pdf_map.json  preview_audio.m4a
+  │   <ID>_全文.pdf  <ID>_校正用*.pdf  preview/  suggestions_*.md
+  ├ contents/    最終書き出し（audio.m4a / video_nosub.mp4 / segment.ass / final.mp4）
+  └ backup/      退避
+```
+
+**preview_audio.m4a** は再生用の派生音源。元が ALAC だと Chrome / Firefox で鳴らないため
+AAC に変換したもの（D-021）。`transcribe.sh` の最後に自動生成される。

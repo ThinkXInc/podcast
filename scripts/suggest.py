@@ -33,6 +33,22 @@ import os, sys, json, re, pathlib
 MODEL = os.environ.get("PODCAST_MODEL", "gpt-5.5-pro")  # 高精度。安く速くしたいなら gpt-5.5
 EFFORT = os.environ.get("PODCAST_REASONING_EFFORT", "high")  # high / xhigh / medium
 HERE = pathlib.Path(__file__).resolve().parents[1]
+import sys as _sys
+_sys.path.insert(0, str(HERE / "scripts"))
+import idpaths  # data/<ID>/ のファイル配置は idpaths が唯一の定義（D-002 改定）
+
+
+def P(outdir, name):
+    """読み書き両用のパス解決。読むときは新旧どちらでも見つかる。"""
+    import pathlib
+    return pathlib.Path(idpaths.find(str(outdir), name))
+
+
+def PW(outdir, name):
+    import pathlib
+    return pathlib.Path(idpaths.save(str(outdir), name))
+
+
 
 def load_prompt(name):
     return (HERE / "prompts" / name).read_text(encoding="utf-8")
@@ -97,7 +113,11 @@ def main():
     else:
         # --- APIモード ---
         from openai import OpenAI
-        client = OpenAI()
+        # gpt-5.5-pro を reasoning=high で 8万字超に対して回すと、openai SDK の既定
+        # タイムアウト(600秒)を超えて APITimeoutError で落ちる（2026-08-05 実測）。
+        # 文字起こしにリアルタイム性は不要なので、余裕を持って1時間にする。
+        client = OpenAI(timeout=float(os.environ.get("PODCAST_API_TIMEOUT", "3600")),
+                        max_retries=1)
         print(f"[suggest] APIモード: {MODEL} を1回呼び出します（effort={EFFORT}）。")
         print("[suggest]   ※ gpt-5.5-pro は応答に数分かかることがあります。")
         print("[suggest]   ※ 料金を避けたい場合は、prompts/prompt_all.txt と transcript.txt を")
@@ -106,7 +126,7 @@ def main():
         # GPTへは Notta精度の transcript.json（本文＋話者）を優先して送る。
         # 話者を [大塚]/[相手] で明示すると、会話相手カットの規則にGPTが沿いやすい。
         # transcript.json が話者を持たない旧形式なら transcript.txt にフォールバック。
-        tj = outdir / "transcript.json"
+        tj = P(outdir, "transcript.json")
         transcript = None
         if tj.exists():
             import json as _json
@@ -120,7 +140,7 @@ def main():
                         _lines.append(f"[{_who}] {_t}")
                 transcript = "\n".join(_lines)
         if not transcript:
-            transcript = (outdir / "transcript.txt").read_text(encoding="utf-8")
+            transcript = (P(outdir, "transcript.txt")).read_text(encoding="utf-8")
         prompt_body = load_prompt("prompt_all.txt")
         resp = client.responses.create(
             model=MODEL,
@@ -132,22 +152,22 @@ def main():
         full_text = absorb(resp.output_text)
 
     # 人が読む用に1ファイルへ（全文そのまま）。Claude Code はこれを丸めず全文チャットに貼る。
-    (outdir / "suggestions_1.md").write_text(
+    (PW(outdir, "suggestions_1.md")).write_text(
         "# 切り出し候補・候補外ゾーン・事実チェック（統合）\n\n" + full_text, encoding="utf-8")
     # 後方互換: 旧名のファイルを参照する箇所があっても落ちないよう空ではなく同一内容を残す
-    (outdir / "suggestions_2.md").write_text(
+    (PW(outdir, "suggestions_2.md")).write_text(
         "（統合プロンプトに移行。内容は suggestions_1.md を参照）\n", encoding="utf-8")
-    (outdir / "suggestions_3.md").write_text(
+    (PW(outdir, "suggestions_3.md")).write_text(
         "（統合プロンプトに移行。候補外ゾーンは suggestions_1.md / exclude_zones.json を参照）\n",
         encoding="utf-8")
 
     # candidates 統合（rank順）
     all_candidates.sort(key=lambda c: c.get("rank", 999))
-    (outdir / "candidates_raw.json").write_text(
+    (PW(outdir, "candidates_raw.json")).write_text(
         json.dumps(all_candidates, ensure_ascii=False, indent=2), encoding="utf-8")
 
     # 候補外ゾーン（グレーで伏せる）＋事実チェックを別ファイルに保存（make_review_pdf が読む）
-    (outdir / "exclude_zones.json").write_text(
+    (PW(outdir, "exclude_zones.json")).write_text(
         json.dumps({"exclude_zones": exclude_zones, "fact_checks": fact_checks},
                    ensure_ascii=False, indent=2), encoding="utf-8")
 

@@ -72,20 +72,63 @@ source "$VENV/bin/activate"
 
 MODEL="${WHISPER_MODEL:-large-v3}"
 DEVICE="${WHISPER_DEVICE:-cpu}"
-COMPUTE="${WHISPER_COMPUTE:-int8}"
+COMPUTE="${WHISPER_COMPUTE:-float32}"   # 精度優先（int8 は量子化で精度が落ちる）
 LANG="${WHISPER_LANG:-ja}"
+
+# ASRエンジン: mlx (Apple Silicon ネイティブ・Metal GPU・fp16。精度/速度とも上) / whisperx (旧・CTranslate2 cpu+int8)
+# arm64 の既定は mlx。config/paths.conf の WHISPER_ENGINE で切替可。
+if [ "$(uname -m)" = "arm64" ]; then
+  ENGINE="${WHISPER_ENGINE:-mlx}"
+else
+  ENGINE="${WHISPER_ENGINE:-whisperx}"
+fi
+MLX_MODEL="${WHISPER_MLX_MODEL:-mlx-community/whisper-large-v3-mlx}"
+if [ "$ENGINE" = "mlx" ] && ! "$VENV/bin/python3" -c 'import mlx_whisper' 2>/dev/null; then
+  echo "[transcribe] mlx_whisper が venv にありません。pip install mlx-whisper するか WHISPER_ENGINE=whisperx を指定してください。"
+  exit 1
+fi
 
 CHUNK_SEC="${WHISPER_CHUNK_SEC:-720}"
 CHUNK_OVERLAP="${WHISPER_CHUNK_OVERLAP:-6}"
+
+# 語彙バイアス用 initial_prompt。
+#
+# 【使わない・D-017】既定で無効。生成側のスクリプトも削除済みなので、通常この経路は通らない。
+# 検証用に WHISPER_PROMPT=1 と data/<ID>/asr_prompt.txt を自分で置いたときだけ動く。
+#
+# 使わない理由（実測は docs/findings.md 5章）。形式を4通り試して、いずれも壊れた:
+#   ・名詞列   → 冒頭120秒が「ご視聴ありがとうございました。」×4 の60字だけになり全滅
+#   ・指示文   → プロンプト文そのものを本文として反復出力
+#   ・内容説明 → プロンプトの話題が本文に漏れて反復
+#   ・議事録要約 → 英単語が1語混じるだけで冒頭が「 semi」×20 に破壊され、
+#                  書き言葉のせいで話者が言っていない「私は」を挿入して書き直す
+# 話し言葉形式だけは崩れなかったが、223トークンに収める過程で上記の混入が起きやすく、
+# 得られるのは固有名詞1語程度の改善。D-015 で Whisper を選んだ理由である発言忠実性を
+# 壊すので割に合わない。
+# 引数は配列で持つ。文字列に入れて $VAR で展開すると、パスに空白があったとき
+# （また zsh 由来のシェルでは常に）1引数に潰れて argparse に弾かれる。
+# 展開側は ${ARR[@]+"${ARR[@]}"} と書く。macOS の bash 3.2 は set -u のもとで
+# 空配列の "${ARR[@]}" を unbound variable として落とすため（bash 4.4 以降は問題ない）。
+PROMPT_FILE="$OUT/generated/asr_prompt.txt"
+PROMPT_ARGS=()
+if [ "${WHISPER_PROMPT:-0}" = "1" ] && [ -s "$PROMPT_FILE" ]; then
+  PROMPT_ARGS=(--prompt "$PROMPT_FILE")
+  echo "[transcribe] 語彙バイアス: $(basename "$PROMPT_FILE") を全チャンクに渡します"
+fi
 
 # 音源全体の長さ(秒)
 DUR="$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$MEDIA" | cut -d. -f1)"
 [ -n "$DUR" ] || { echo "[transcribe] 長さ取得に失敗"; exit 1; }
 
-WORK="$OUT/.chunks"
+mkdir -p "$OUT/generated"
+WORK="$OUT/generated/.chunks"
 rm -rf "$WORK"; mkdir -p "$WORK"
 
-echo "[transcribe] WhisperX $MODEL ($DEVICE/$COMPUTE) 分割文字起こし: 全長 ${DUR}s / チャンク ${CHUNK_SEC}s（重なり ${CHUNK_OVERLAP}s）"
+if [ "$ENGINE" = "mlx" ]; then
+  echo "[transcribe] mlx-whisper $MLX_MODEL (Metal/fp16) 分割文字起こし: 全長 ${DUR}s / チャンク ${CHUNK_SEC}s（重なり ${CHUNK_OVERLAP}s）"
+else
+  echo "[transcribe] WhisperX $MODEL ($DEVICE/$COMPUTE) 分割文字起こし: 全長 ${DUR}s / チャンク ${CHUNK_SEC}s（重なり ${CHUNK_OVERLAP}s）"
+fi
 
 # チャンク境界を作る（オーバーラップ付き）。各行: index start_sec end_sec
 # ※ mapfile は bash4+ 専用で macOS の bash 3.2 に無いため使わない。while read で回す。
@@ -114,16 +157,27 @@ while read -r ci cstart cend; do
          -ac 1 -ar 16000 "$cfile" </dev/null
   # 文字起こし（このチャンク専用の出力先）
   cdir="$WORK/out_${ci}"; mkdir -p "$cdir"
-  whisperx "$cfile" \
-    --model "$MODEL" --device "$DEVICE" --compute_type "$COMPUTE" \
-    --language "$LANG" --output_dir "$cdir" --output_format json </dev/null
+  if [ "$ENGINE" = "mlx" ]; then
+    # mlx_whisper の CLI は使わない。CLI は --temperature の既定が単一値 0 で、
+    # Whisper 標準の「幻覚ループ時に温度を上げて再デコードする」フォールバックが
+    # 無効になる（実測で70秒ぶん同じ文を繰り返して内容が消えた）。
+    # Python API 経由なら既定の温度梯子が効くので、専用ドライバを呼ぶ。
+    "$VENV/bin/python3" "$HERE/scripts/mlx_transcribe.py" \
+      "$cfile" "$cdir/chunk.json" \
+      --model "$MLX_MODEL" --lang "$LANG" \
+      ${PROMPT_ARGS[@]+"${PROMPT_ARGS[@]}"} </dev/null
+  else
+    whisperx "$cfile" \
+      --model "$MODEL" --device "$DEVICE" --compute_type "$COMPUTE" \
+      --language "$LANG" --output_dir "$cdir" --output_format json </dev/null
+  fi
   # このチャンクの絶対開始秒を記録（マージ時のオフセット）
   echo "$cstart" > "$cdir/.offset"
 done < "$_chunks_file"
 rm -f "$_chunks_file"
 
 # 全チャンクJSONをオフセット補正してマージ → transcript.json
-python3 - "$WORK" "$OUT/transcript.json" "$CHUNK_OVERLAP" <<'PY'
+python3 - "$WORK" "$OUT/generated/transcript.json" "$CHUNK_OVERLAP" <<'PY'
 import json, sys, pathlib, glob
 work=pathlib.Path(sys.argv[1]); dst=sys.argv[2]; ov=float(sys.argv[3])
 
@@ -208,7 +262,7 @@ if [ "${KEEP_CHUNKS:-0}" != "1" ]; then
   rm -rf "$WORK"
 fi
 # プレーン全文（segments のテキストを連結）
-python3 - "$OUT/transcript.json" "$OUT/transcript.txt" <<'PY'
+python3 - "$OUT/generated/transcript.json" "$OUT/generated/transcript.txt" <<'PY'
 import json, sys
 src, dst = sys.argv[1], sys.argv[2]
 try:
@@ -228,6 +282,10 @@ for s in d.get("segments", []):
 open(dst,"w",encoding="utf-8").write("\n".join(lines)+"\n")
 print(f"[transcribe] transcript.txt: {len(lines)} 行")
 PY
+
+# ブラウザ再生用の音源を用意する。元が ALAC だと Chrome / Firefox で鳴らないため。
+# 元音源には手を触れず、AAC のコピーを別ファイルで作る（既にあれば何もしない）。
+"$VENV/bin/python3" "$HERE/scripts/make_preview_audio.py" "$ID" || true
 
 echo "[transcribe] 完了 -> $OUT/transcript.json (字幕の元データ) , transcript.txt"
 echo "[transcribe] 次: suggest.py で候補生成 → 確定 segments.json → render.py で字幕付き書き出し"

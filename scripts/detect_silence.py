@@ -30,6 +30,22 @@ env:
 import os, sys, json, pathlib
 
 HERE = pathlib.Path(__file__).resolve().parents[1]
+import sys as _sys
+_sys.path.insert(0, str(HERE / "scripts"))
+import idpaths  # data/<ID>/ のファイル配置は idpaths が唯一の定義（D-002 改定）
+
+
+def P(outdir, name):
+    """読み書き両用のパス解決。読むときは新旧どちらでも見つかる。"""
+    import pathlib
+    return pathlib.Path(idpaths.find(str(outdir), name))
+
+
+def PW(outdir, name):
+    import pathlib
+    return pathlib.Path(idpaths.save(str(outdir), name))
+
+
 GAP_MIN = float(os.environ.get("PODCAST_GAP_MIN", "0.6"))
 GAP_LONG = float(os.environ.get("PODCAST_GAP_LONG", "4.0"))
 
@@ -87,8 +103,8 @@ def main():
     root = paths.get("PODCAST_ROOT", str(HERE / "data"))
     outdir = pathlib.Path(root) / ID
 
-    tj = outdir / "transcript.json"
-    sj = outdir / "segments.json"
+    tj = P(outdir, "transcript.json")
+    sj = P(outdir, "segments.json")
     if not tj.exists():
         print(f"[detect] transcript.json が無い: {tj}"); sys.exit(1)
     if not sj.exists():
@@ -143,7 +159,7 @@ def main():
             mark = "◎詰め候補(要確認かも)" if x["flag"] == "review" else "⚠取りこぼし疑い(触らない)"
             print(f"    {hms(x['start_sec'])} {mark} {x['duration']:.1f}s   …{x['before']}／{x['after']}…")
 
-    (outdir / "silences.json").write_text(
+    (PW(outdir, "silences.json")).write_text(
         json.dumps({"method": "transcript_gap", "gap_min": GAP_MIN, "gap_long": GAP_LONG,
                     "segments": out_segments}, ensure_ascii=False, indent=2), encoding="utf-8")
 

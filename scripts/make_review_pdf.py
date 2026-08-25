@@ -32,6 +32,22 @@ Notta が出した「全文PDF（ファイル名に transcript を含む）」�
 import os, sys, json, re, pathlib
 
 HERE = pathlib.Path(__file__).resolve().parents[1]
+import sys as _sys
+_sys.path.insert(0, str(HERE / "scripts"))
+import idpaths  # data/<ID>/ のファイル配置は idpaths が唯一の定義（D-002 改定）
+
+
+def P(outdir, name):
+    """読み書き両用のパス解決。読むときは新旧どちらでも見つかる。"""
+    import pathlib
+    return pathlib.Path(idpaths.find(str(outdir), name))
+
+
+def PW(outdir, name):
+    import pathlib
+    return pathlib.Path(idpaths.save(str(outdir), name))
+
+
 
 
 def load_conf(path):
@@ -51,11 +67,21 @@ def hms(s):
 
 
 def find_transcript_pdf(outdir):
+    """土台にする全文PDFを選ぶ。
+    D-015 で本文は Whisper を正としたので、Whisper から組んだ <ID>_全文.pdf を最優先する。
+    引用文もカット区間も Whisper 由来になるため、土台が Notta のままだと本文が食い違い、
+    search_for() の完全一致も、時刻索引の位置も合わなくなる。
+    無ければ従来どおり Notta の *transcript*.pdf にフォールバックする。"""
+    gen = P(outdir, f"{outdir.name}_全文.pdf")
+    if gen.exists():
+        return gen
     cands = [p for p in outdir.glob("*.pdf")
              if "transcript" in p.name.lower() and "校正" not in p.name]
     if not cands:
         raise FileNotFoundError(
-            f"{outdir} に全文PDF（ファイル名に 'transcript' を含む .pdf）が見つかりません")
+            f"{outdir} に全文PDF が見つかりません。"
+            f" python scripts/make_transcript_pdf.py {outdir.name} で生成できます"
+            f"（または Notta の *transcript*.pdf を置いてください）")
     return sorted(cands, key=lambda p: -p.stat().st_size)[0]
 
 
@@ -125,9 +151,11 @@ def main():
         raise RuntimeError("全文PDFからタイムスタンプ行を検出できませんでした。"
                            "形式が想定（HH:MM:SS Speaker N）と異なる可能性があります。")
 
-    cand_path = outdir / "candidates_raw.json"
+    # 比較用: PODCAST_CANDIDATES で候補ファイルを、PODCAST_PDF_SUFFIX で出力名を変えられる。
+    # Claude が出した候補と GPT が出した候補を並べて見比べるために使う。
+    cand_path = P(outdir, os.environ.get("PODCAST_CANDIDATES", "candidates_raw.json"))
     candidates = json.loads(cand_path.read_text(encoding="utf-8")) if cand_path.exists() else []
-    seg_path = outdir / "segments.json"
+    seg_path = P(outdir, "segments.json")
     segments = []
     if seg_path.exists():
         segments = json.loads(seg_path.read_text(encoding="utf-8")).get("segments", [])
@@ -138,7 +166,7 @@ def main():
 
     # カット推奨の C番号・判断状況（scripts/assign_cut_ids.py が出す）
     cutdec_map = {}
-    cd_path = outdir / "cut_decisions.json"
+    cd_path = P(outdir, "cut_decisions.json")
     if cd_path.exists():
         for _c in json.loads(cd_path.read_text(encoding="utf-8")).get("cuts", []):
             cutdec_map[(round(float(_c["start_sec"]), 1), round(float(_c["end_sec"]), 1))] = _c
@@ -406,7 +434,8 @@ def main():
     cover = doc.new_page(0, width=PAGE_W, height=h)
     y = 56
     T(cover, 48, y, f"{ID}　校正用", 20, (0, 0, 0)); y += 30
-    T(cover, 48, y, "Notta全文PDFの上に、AIの切り出し案を重ねた校正用です。", 10, (0, 0, 0)); y += 17
+    _who = os.environ.get("PODCAST_PDF_LABEL", "")
+    T(cover, 48, y, f"全文PDFの上に{_who}の切り出し案を重ねた校正用です。", 10, (0, 0, 0)); y += 17
     for txt, col in [("赤＝AI本命候補（区間を薄い帯でハイライト＋▼▲マーカー）", RED),
                      ("橙＝AI補助候補（短尺・番外・細かいもの。左罫線＋▼▲）", ORANGE),
                      ("濃赤＝カット推奨（該当文に下線＋「」、理由を併記）", CUT),
@@ -612,7 +641,7 @@ def main():
             na = nearest(index, a)
             T(doc[na[1]], 47, na[2].y0 - 12, f"✂確定{idx} 除外 {hms(a)}–{hms(b)}", 8, BLUE)
 
-    out_pdf = outdir / f"{ID}_校正用.pdf"
+    out_pdf = PW(outdir, f"{ID}_校正用{os.environ.get('PODCAST_PDF_SUFFIX', '')}.pdf")
     doc.save(str(out_pdf), garbage=4, deflate=True)
     print(f"[review_pdf] 生成: {out_pdf}")
     print(f"[review_pdf] 土台: {src_pdf.name} / 本命{len(mains)} 補助{len(helpers)} 確定{len(segments)} / フォント: {os.path.basename(FONT_FILE) if FONT_FILE else 'builtin'}")

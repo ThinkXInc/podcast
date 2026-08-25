@@ -30,6 +30,22 @@ WhisperX の transcript.json（単語タイムスタンプ）から その区間
 import os, sys, json, subprocess, pathlib, re, glob
 
 HERE = pathlib.Path(__file__).resolve().parents[1]
+import sys as _sys
+_sys.path.insert(0, str(HERE / "scripts"))
+import idpaths  # data/<ID>/ のファイル配置は idpaths が唯一の定義（D-002 改定）
+
+
+def P(outdir, name):
+    """読み書き両用のパス解決。読むときは新旧どちらでも見つかる。"""
+    import pathlib
+    return pathlib.Path(idpaths.find(str(outdir), name))
+
+
+def PW(outdir, name):
+    import pathlib
+    return pathlib.Path(idpaths.save(str(outdir), name))
+
+
 MEDIA_EXT = (".m4a", ".mp3", ".wav", ".aac", ".mp4", ".mov", ".m4v")
 
 
@@ -62,15 +78,45 @@ def find_media(outdir, ID, arg):
     if arg:
         p = pathlib.Path(arg)
         return p if p.is_absolute() else (outdir / arg)
-    # <ID>.<ext> 優先、無ければフォルダ内の最初のメディア（_orig/_trimmed と contents 配下は除く）
-    for ext in MEDIA_EXT:
-        cand = outdir / f"{ID}{ext}"
-        if cand.exists():
-            return cand
-    for f in sorted(outdir.glob("*")):
-        if f.suffix.lower() in MEDIA_EXT and "_orig" not in f.stem and "_trimmed" not in f.stem:
-            return f
-    return None
+    # 正本は data/<ID>/source/original.<ext>（固定名・不変。オーナー指示 2026-08-08）。
+    # 書き出し・render は常にこれを使う。無ければ一度だけ従来探索で特定し、
+    # APFSクローン（cp -c・容量ゼロ）で source/ に固定してから返す。
+    src_dir = pathlib.Path(outdir) / "source"
+    for f in sorted(src_dir.glob("original.*")):
+        return f
+    found = _discover_media(pathlib.Path(outdir), ID)
+    if found is None:
+        return None
+    try:
+        src_dir.mkdir(exist_ok=True)
+        pinned = src_dir / f"original{found.suffix.lower()}"
+        r = subprocess.run(["cp", "-c", str(found), str(pinned)])
+        if r.returncode != 0:
+            import shutil as _sh
+            _sh.copy2(found, pinned)
+        print(f"[media] 元音源を固定: {found.name} -> source/{pinned.name}")
+        return pinned
+    except OSError:
+        return found
+
+
+def _discover_media(outdir, ID):
+    """従来の自動探索（source/ 固定前の一度だけ使う）。書き出し物・退避物は拾わない。"""
+    import re as _re
+    export_name = _re.compile(_re.escape(ID) + r"_\d+_")
+    cands = [f for f in sorted(outdir.glob("*"))
+             if f.suffix.lower() in MEDIA_EXT
+             and "_orig" not in f.stem and "_trimmed" not in f.stem
+             and not export_name.match(f.name)]
+    if not cands:
+        return None
+    wavs = [f for f in cands if f.suffix.lower() == ".wav"]
+    if wavs:
+        return max(wavs, key=lambda f: f.stat().st_size)
+    exact = [f for f in cands if f.stem == ID]
+    if exact:
+        return exact[0]
+    return max(cands, key=lambda f: f.stat().st_size)
 
 
 def find_subtitles_ffmpeg():
@@ -114,7 +160,7 @@ def has_video(media):
 
 def load_words(outdir):
     """WhisperX transcript.json から単語リスト [{word,start,end}] を取り出す。無ければ []。"""
-    tp = outdir / "transcript.json"
+    tp = P(outdir, "transcript.json")
     if not tp.exists():
         return []
     data = json.loads(tp.read_text(encoding="utf-8"))
@@ -208,7 +254,7 @@ def main():
     root = paths.get("PODCAST_ROOT") or paths.get("WORKROOT") or str(HERE / "data")
     outdir = pathlib.Path(root) / ID
 
-    seg_path = outdir / "segments.json"
+    seg_path = P(outdir, "segments.json")
     if not seg_path.exists():
         print(f"[render] {seg_path} が無い。チャットで切り出しを確定し segments.json を書いてから実行する。")
         sys.exit(1)
