@@ -410,3 +410,43 @@ initial_prompt に渡して `mlx_transcribe.py` で再ASRしたところ、実�
 なお発生しうる。復元後は assign_speakers.py 再実行と transcript.txt 再生成、
 cut_decisions の該当Cを keep に更新するところまでで1セット
 （実施例: backup/transcript_before_reasr_1326.json に元を退避）。
+
+## 12. 「.wav コンテナに AAC コーデック」の音源はサイトで再生できない（2026-09-05）
+
+**症状**: 六本木7-25-1 のページでタイムラインの再生がスペースキーでもメニューでも始まらない
+（左下に「元音源がありません」）。
+
+**測定**: 元音源 `六本木260725-1(潮汐現象とガリレオ).wav` を ffprobe すると codec=aac（コンテナは wav）。
+`make_preview_audio.py` はコーデックだけ見て「ブラウザで再生できる形式なので変換しません」と
+preview_audio.m4a の生成をスキップしていた。一方 `preview_local.py` の音源探索は
+preview_audio.m4a → 直下の .m4a → .mp4 の順で、**.wav にはフォールバックしない**ため、
+ページに `<audio>` 要素自体が出ていなかった。
+
+**教訓**: 再生可否は「コーデック」と「コンテナ（拡張子）」の両方で判定する。
+`make_preview_audio.py` を「codec が BROWSER_OK かつ拡張子が .m4a/.mp3/.mp4/.aac のときだけ
+スキップ」に修正済み（--force も判定より先に効くようにした）。transcribe.sh 経由の今後のIDにも効く。
+
+## 13. サイトのタイムライン本文は transcript.json の segments[].words から組まれる（2026-09-07）
+
+**症状**: 結合IDのタイムラインで、新宿・ストラティバリ・花火の単語が冒頭に混在して表示された
+（音源・segments.json・再生順序は正しい）。ページの単語数 15537 に対し word_segments は 15522 で不一致。
+
+**測定**: `preview_local.py` の timeline_block（935行付近）は `tsegments[].words`＝transcript.json の
+**segments[].words** を集めて時刻順ソートで組んでいる（word_segments ではない）。結合時に
+segment の start/end と word_segments だけシフトし、内側 words[] の時刻が元IDのままだったため、
+全パートの単語が元ID時刻で交錯した。
+
+**教訓**: transcript を切り出し・シフト・連結するときは、segments[].start/end、word_segments、
+**segments[].words の3箇所すべて**の時刻を変換する。1つでも残すとタイムライン表示だけが壊れ、
+音源は正しいため原因の切り分けに時間がかかる（今回は3地点の試し文字起こしで音源側の正しさを先に確定して絞り込めた）。
+
+## 14. 確認サイトの書き出しは sid 必須。AAC同士なら concat の -c copy で無劣化追記できる（2026-09-05〜07）
+
+**測定1**: 「この編集で書き出す」は `start_render_spec` が spec.sid 空文字で "bad_id" を返す。
+segments.json を手で作ると sid が無く、書き出しだけが失敗する（保存・表示は index フォールバックで動くため気づきにくい）。
+sid は `uuid.uuid4().hex[:12]` で付与すれば通る。
+
+**測定2**: 結合音源（aac_at 256k/48kHz/stereo）の末尾に、同一エンコーダ設定で切り出した別区間を
+`ffmpeg -f concat -c copy` で追記できた（既存部の再エンコードなし）。つなぎ目 1692〜1704 秒を
+試し文字起こしして「…ミーティングしてから→あとは遅くまでやってるか…」と正しく接続していることを確認。
+ストリームコピーの切断精度は AAC フレーム（約21ms）単位で、単語時刻との整合には実用上問題なかった。

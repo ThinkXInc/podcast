@@ -64,8 +64,11 @@ def main():
         return 1
 
     codec = probe_codec(media)
-    print(f"[preview音源] 元: {os.path.basename(media)} / codec={codec}")
-    if codec in BROWSER_OK:
+    ext = os.path.splitext(media)[1].lower()
+    print(f"[preview音源] 元: {os.path.basename(media)} / codec={codec} / 形式={ext}")
+    # コーデックだけでなくコンテナも見る。サイト(preview_local)は .m4a/.mp4 しか
+    # 再生対象にしないので、.wav 等は中身が AAC でも変換が要る（六本木7-25-1で実測）。
+    if not force and codec in BROWSER_OK and ext in (".m4a", ".mp3", ".mp4", ".aac"):
         print("[preview音源] ブラウザで再生できる形式なので変換しません")
         return 0
 
@@ -74,7 +77,7 @@ def main():
         print(f"[preview音源] 既にあります: {OUT_NAME}（作り直すなら --force）")
         return 0
 
-    print(f"[preview音源] {codec} はブラウザ非対応。AAC 64kbps mono に変換します…")
+    print(f"[preview音源] AAC 64kbps mono に変換します…")
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", media,
                     "-vn", "-ac", "1", "-c:a", "aac", "-b:a", "64k",
                     "-movflags", "+faststart", dst], check=True)

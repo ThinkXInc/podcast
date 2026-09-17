@@ -1085,6 +1085,72 @@ def _append_history(base, seg_path):
         pass  # 履歴が書けなくても保存自体は続ける
 
 
+def apply_full_to_subs(idv):
+    """「全編」セグメントの drops を、他の各セグメント（各論）へ適用する。
+    全編自身は一切変更しない。各論側は自分の区間 [start_sec, end_sec] に重なる
+    全編 drops だけを切り取って既存 drops と結合する。
+    上書き前に segments_history.jsonl へ退避するので復元できる（オーナー指示 2026-09-06）。"""
+    if not idv or "/" in idv or idv.startswith("."):
+        return False
+    base = os.path.join(DATA_DIR, idv)
+    seg_path = idpaths.find(base, "segments.json")
+    if not os.path.isfile(seg_path):
+        return False
+    seg = _load_json(seg_path, {})
+    segs = seg.get("segments", [])
+    full = next((sg for sg in segs if "全編" in (sg.get("title") or "")), None)
+    if full is None:
+        return False
+    try:
+        fdrops = [(float(a), float(b)) for a, b in (full.get("drops") or []) if float(b) > float(a)]
+    except (TypeError, ValueError):
+        return False
+    # 操作自体も受信箱へ完全記録（edit_save と同じ流儀）
+    try:
+        import datetime
+        inbox = os.path.join(idpaths.edit_dir(base), "save_inbox.jsonl")
+        with open(inbox, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"at": datetime.datetime.now().isoformat(timespec="milliseconds"),
+                                "payload": {"op": "apply_full_to_subs", "id": idv,
+                                            "full_drops": [list(d) for d in fdrops]}},
+                               ensure_ascii=False) + "\n")
+            f.flush(); os.fsync(f.fileno())
+    except Exception:
+        pass
+    changed = False
+    for sg in segs:
+        if "全編" in (sg.get("title") or ""):
+            continue  # 全編は変更しない（他に全編相当があっても触らない）
+        try:
+            s, e = float(sg["start_sec"]), float(sg["end_sec"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        add = [[max(a, s), min(b, e)] for a, b in fdrops if min(b, e) - max(a, s) > 0.05]
+        if not add:
+            continue
+        try:
+            cur = [[float(d[0]), float(d[1])] for d in (sg.get("drops") or [])]
+        except (TypeError, ValueError, IndexError):
+            cur = []
+        merged = sorted(cur + add)
+        out = []
+        for a, b in merged:
+            if out and a <= out[-1][1] + 0.01:
+                out[-1][1] = max(out[-1][1], b)
+            else:
+                out.append([a, b])
+        out = [[round(a, 3), round(b, 3)] for a, b in out]
+        if out != sg.get("drops"):
+            sg["drops"] = out
+            changed = True
+    if not changed:
+        return True  # 適用すべき差分なし。成功扱い（何も壊さない）
+    _append_history(base, seg_path)  # 復元用スナップショット
+    with open(seg_path, "w", encoding="utf-8") as f:
+        json.dump(seg, f, ensure_ascii=False, indent=2)
+    return True
+
+
 def esc(s):
     return html.escape(str(s if s is not None else ""))
 
@@ -1123,6 +1189,11 @@ def page(title, body):
         "document.addEventListener('DOMContentLoaded',function(){"
         "var on=localStorage.getItem('nr_on')==='1';"
         "document.querySelectorAll('.nrtoggle').forEach(function(c){c.checked=on;});});"
+        # 全編の drops を各論セグメントへ反映（復元は segments_history.jsonl から）
+        "function applyFullToSubs(){var idv=new URLSearchParams(location.search).get('id');"
+        "if(!confirm('全編の編集内容を各論に適用しますか？（この操作は復元できます）'))return;"
+        "fetch('/apply_full?id='+encodeURIComponent(idv)).then(function(r){return r.text();})"
+        ".then(function(t){if(t==='ok'){location.reload();}else{alert('適用に失敗しました: '+t);}});}"
         "function renderSeg(sid,idx){var idv=new URLSearchParams(location.search).get('id');"
         "var el=document.getElementById('rst'+idx);"
         "var st=window.tlState?window.tlState(sid):null;"
@@ -1789,8 +1860,13 @@ def render_id(idv):
         # ボタンは1つ。完了したらブラウザのダウンロードとして自動で落ちてくる
         # （リンク列・プレーヤーは出さない。オーナー指示・2026-08-08）
         _sid = sg.get("sid") or ""
+        # 全編には「全編の編集を各論に適用」ボタンを併設（オーナー指示 2026-09-06。
+        # 適用前に segments_history へ退避するので復元できる。全編自身は変更されない）
+        _apply_btn = ("　<button onclick=\"applyFullToSubs()\">全編の編集を各論に適用</button>"
+                      if _full else "")
         parts.append(
             f"<p class='meta'><button onclick=\"renderSeg('{_sid}',{idx})\">この編集で書き出す（m4a）</button>"
+            f"{_apply_btn}"
             f"　<label><input type='checkbox' class='nrtoggle' onchange='nrToggle(this)'> ノイズ除去</label>"
             f"　<span id='rst{idx}' class='meta'></span></p>")
 
@@ -1995,6 +2071,14 @@ class Handler(BaseHTTPRequestHandler):
                                     (qs.get("cid") or [""])[0],
                                     (qs.get("action") or [""])[0],
                                     (qs.get("status_only") or ["0"])[0] == "1")
+                data = (b"ok" if ok else b"ng")
+                self.send_response(200 if ok else 400)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            elif route == "/apply_full":
+                ok = apply_full_to_subs((qs.get("id") or [""])[0])
                 data = (b"ok" if ok else b"ng")
                 self.send_response(200 if ok else 400)
                 self.send_header("Content-Type", "text/plain")
